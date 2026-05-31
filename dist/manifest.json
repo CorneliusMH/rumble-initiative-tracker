@@ -1,0 +1,21 @@
+{
+  "name": "Rumble Initiative Tracker",
+  "version": "0.2.0",
+  "manifest_version": 1,
+  "author": "Rumble",
+  "description": "Token-based three-rumble initiative tracker with declare/reveal phases.",
+  "icon": "/icon.svg",
+  "action": {
+    "title": "Rumble Initiative",
+    "icon": "/icon.svg",
+    "popover": "/index.html",
+    "height": 720,
+    "width": 500
+  },
+  "permissions": [
+    {
+      "name": "clipboard-write",
+      "reason": "Allow exporting the combat log to the clipboard."
+    }
+  ]
+}

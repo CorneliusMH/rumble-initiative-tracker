@@ -1,0 +1,28 @@
+Okay so I've got this fancy initiative setup that I sort of want to make a module for, but I'm scared of it being too much effort to put together. Would love to hear thoughts (especially if it's just "no, lol, don't even" or "did you try (other extension) already?") from the experts here.
+
+## How "Rumble Combat" Initiative works
+* 3 rumbles per round
+* Each rumble has 3 parts:
+    1. Everyone writes down what they're doing for their action
+    2. Everyone reveals what they're doing for their action
+    3. Everyone resolves their action in initiative order (which is set at the beginning of combat unless they delay)
+
+## How I'm managing it now
+* Use basic OBR Initiative Tracker to keep track of initiative
+* Use Rumble Chat to do the "write down and reveal" part, where we each write it down and then everyone hits enter at around the same time
+* Resolve from there
+* Try to keep track of turns/rumbles manually, sometimes incorrectly
+
+### What functions I want
+* Allow PCs to enter own initiative
+* Ability to enter text and click a button so it's ready, but don't display it to the group until everyone has clicked ready
+* Ability to select previous turns' text (repeat,etc - maybe show the previous like....5-10 unique inputs? Depends on space constraints, I guess.)
+* Display declared action next to initiative in list
+* Automatically count turns/sub-turns and display to all (first and third are when "beginning of turn" and "end of turn" effects occur)
+
+### Functions that would be great to have but aren't *needs*
+* Ability to select to delay your turn (lower your initiative) - especially if this 
+* Timestamped text "combat log" that can be exported/copied
+* Display to other players who is ready
+* Some basics like "strike" and "stride" maybe as categories of actions? And they'd each have a different icon?
+** Move, Attack, Charge up, Cast Spell, Skill Check

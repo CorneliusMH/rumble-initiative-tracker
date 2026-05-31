@@ -1,0 +1,181 @@
+:root {
+  color-scheme: light;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  line-height: 1.35;
+  color: #1f2937;
+  background: radial-gradient(circle at top, #f4f1de, #e9f5f0 60%, #dde8f4);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 10px;
+}
+
+.layout {
+  display: grid;
+  gap: 10px;
+}
+
+.panel {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid #d0d8e5;
+  border-radius: 12px;
+  padding: 10px;
+  backdrop-filter: blur(2px);
+}
+
+.banner h1 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.banner p {
+  margin: 4px 0 0;
+  color: #506179;
+}
+
+.banner .cue {
+  margin-top: 2px;
+}
+
+.stats-row,
+.button-row,
+.row-between {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.row-between {
+  justify-content: space-between;
+}
+
+.wrap {
+  flex-wrap: wrap;
+}
+
+.pill {
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e5eef8;
+  color: #355070;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+h3 {
+  margin: 10px 0 6px;
+  font-size: 0.9rem;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 0.86rem;
+}
+
+input,
+select,
+button {
+  font: inherit;
+}
+
+input,
+select {
+  padding: 7px;
+  border: 1px solid #bec7d8;
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+button {
+  border: 1px solid #a8b6cc;
+  background: #f5f8fd;
+  color: #30425d;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: #1f3c88;
+  border-color: #1f3c88;
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.template-grid,
+.history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 6px;
+}
+
+.initiative-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.entry {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #dde3ef;
+  border-radius: 8px;
+  padding: 7px;
+  background: #fff;
+}
+
+.entry.mine {
+  border-color: #1a936f;
+  box-shadow: 0 0 0 1px rgba(26, 147, 111, 0.2);
+}
+
+.action {
+  font-size: 0.88rem;
+  color: #22324d;
+}
+
+.muted {
+  color: #627189;
+  font-size: 0.8rem;
+}
+
+.log {
+  display: grid;
+  gap: 4px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.log p {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 520px) {
+  body {
+    padding: 6px;
+  }
+
+  .entry {
+    grid-template-columns: 1fr;
+  }
+}
