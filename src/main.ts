@@ -166,6 +166,19 @@ async function addSelectedToInitiative(): Promise<void> {
   });
 }
 
+async function updateTokenOwner(tokenId: string, newOwnerId: string): Promise<void> {
+  if (!newOwnerId.trim()) return;
+  await OBR.scene.items.updateItems([tokenId], (items) => {
+    for (const item of items) {
+      const meta = item.metadata as Record<string, unknown>;
+      const current = meta[ITEM_META_KEY] as Partial<ItemInitiativeMeta> | undefined;
+      if (current) {
+        meta[ITEM_META_KEY] = { ...current, ownerId: newOwnerId.trim() };
+      }
+    }
+  });
+}
+
 async function removeSelectedFromInitiative(): Promise<void> {
   if (localSelection.length === 0) return;
   const removed = [...localSelection];
@@ -322,6 +335,17 @@ function bindEvents(): void {
     void removeSelectedFromInitiative();
   });
 
+  app.querySelector("#update-owner-btn")?.addEventListener("click", () => {
+    const target = selectedParticipant();
+    if (!target) return;
+    const ownerInput = app.querySelector<HTMLInputElement>("#owner-input");
+    if (!ownerInput) return;
+    const newOwnerId = ownerInput.value.trim();
+    if (newOwnerId) {
+      void updateTokenOwner(target.tokenId, newOwnerId);
+    }
+  });
+
   app.querySelector("#declaration-input")?.addEventListener("input", (event) => {
     localDraftAction = (event.target as HTMLInputElement).value;
   });
@@ -396,6 +420,18 @@ function render(): void {
         ? `
           <section class="editor-section">
             <h2>Declare Action</h2>
+            ${isGm
+              ? `
+                <div class="owner-info">
+                  <label>
+                    Owner (Player ID)
+                    <input id="owner-input" type="text" placeholder="Player ID" value="${escapeHtml(target.ownerId || "")}" />
+                  </label>
+                  <button id="update-owner-btn" type="button">Update Owner</button>
+                </div>
+              `
+              : ""
+            }
             <label>
               Action
               <input id="declaration-input" type="text" placeholder="What does ${escapeHtml(target.name)} do?" value="${escapeHtml(draftTextValue)}" />
@@ -410,9 +446,15 @@ function render(): void {
             <button id="ready-btn" type="button" class="primary">${decl?.ready ? "Update Ready" : "Ready"}</button>
           </section>
         `
-        : candidate
+        : target
           ? `
             <section class="editor-section">
+              <p class="muted">You are not the owner of this token. Owner: <strong>${escapeHtml(target.ownerId || "Unknown")}</strong></p>
+            </section>
+          `
+          : candidate
+            ? `
+              <section class="editor-section">
               <button id="add-initiative" type="button" class="primary">Add to Initiative</button>
             </section>
           `
@@ -454,7 +496,7 @@ function render(): void {
         : ""
       }
 
-      ${logPreview.length > 0
+      ${(isGm || coreState.phase !== "plan") && logPreview.length > 0
         ? `
           <section class="log-section">
             <h2>Recent Log</h2>

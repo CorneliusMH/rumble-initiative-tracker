@@ -66,6 +66,23 @@ section:last-child {
   font-size: 0.95rem;
 }
 
+.owner-info {
+  margin-bottom: 10px;
+  padding: 8px;
+  background: #2a2a2a;
+  border-left: 2px solid #0d47a1;
+  border-radius: 3px;
+}
+
+.owner-info label {
+  margin-bottom: 6px;
+}
+
+.owner-info button {
+  margin-top: 6px;
+  width: 100%;
+}
+
 label {
   display: block;
   margin-bottom: 8px;
