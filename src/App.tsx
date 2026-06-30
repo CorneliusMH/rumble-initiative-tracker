@@ -38,6 +38,7 @@ export function App() {
   const [bulkSelection, setBulkSelection] = useState<string[]>([]);
   const [theme, setTheme] = useState<{ mode: string; text: { primary: string }; background: { default: string }; primary: { main: string } } | null>(null);
   const [obrReady, setObrReady] = useState(false);
+  const initializingRef = React.useRef(true);
 
   // Initialize theme
   useEffect(() => {
@@ -106,7 +107,6 @@ export function App() {
                 const playerMap = new Map<string, Player>();
                 for (const item of items) {
                   if (item.createdUserId && !playerMap.has(item.createdUserId)) {
-                    // Try to get player info - this may not work, so we'll handle it
                     playerMap.set(item.createdUserId, {
                       id: item.createdUserId,
                       name: "Player",
@@ -136,22 +136,34 @@ export function App() {
           // 3. AFTER all initial state is set, set up the listeners
           const unsubscribers = [
             OBR.player.onChange((player) => {
-              setRole(player.role);
-              setSelection(player.selection ?? []);
+              if (!initializingRef.current) {
+                setRole(player.role);
+                setSelection(player.selection ?? []);
+              }
             }),
-            OBR.scene.onReadyChange(setSceneReady),
+            OBR.scene.onReadyChange((isReady) => {
+              if (!initializingRef.current) {
+                setSceneReady(isReady);
+              }
+            }),
             OBR.scene.items.onChange((items) => {
-              const derived = deriveParticipants(items as Item[]);
-              setParticipants(derived);
+              if (!initializingRef.current) {
+                const derived = deriveParticipants(items as Item[]);
+                setParticipants(derived);
+              }
             }),
             onMetadataChange((metadata) => {
-              setCoreState(sanitizeCore(metadata[CORE_KEY]));
-              setDeclarations(readDeclarations(metadata));
+              if (!initializingRef.current) {
+                setCoreState(sanitizeCore(metadata[CORE_KEY]));
+                setDeclarations(readDeclarations(metadata));
+              }
             }),
           ];
-          
+
+          // Mark initialization as complete
+          initializingRef.current = false;
           setObrReady(true);
-          
+
           // Return cleanup function to unsubscribe from listeners
           return () => {
             unsubscribers.forEach((unsub) => {
@@ -161,6 +173,7 @@ export function App() {
         });
       } catch (e) {
         console.error("OBR initialization failed:", e);
+        initializingRef.current = false;
         setObrReady(true); // Set true even on error so UI shows
       }
     };
