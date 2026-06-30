@@ -132,6 +132,32 @@ button:disabled {
   gap: 6px;
 }
 
+.queue-list {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+  border-left: 3px solid #a8b6cc;
+  padding-left: 8px;
+}
+
+.queue-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  padding: 4px;
+  background: #f9fafc;
+  border-radius: 4px;
+}
+
+.queue-remove {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 0.9rem;
+  min-width: auto;
+}
+
 .entry {
   display: grid;
   grid-template-columns: 120px 1fr;

@@ -4,6 +4,13 @@ export interface Participant {
   tokenId: string;
   name: string;
   initiative: number;
+  ownerId?: string;
+}
+
+export interface QueuedAction {
+  text: string;
+  category?: string;
+  timestamp: number;
 }
 
 export interface Declaration {
@@ -12,6 +19,8 @@ export interface Declaration {
   revealed: boolean;
   timestamp: number;
   category?: string;
+  ownerId?: string;
+  queue?: QueuedAction[];
 }
 
 export interface CombatLogEntry {

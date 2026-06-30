@@ -19,9 +19,11 @@ const CATEGORY_OPTIONS = ["Move", "Attack", "Charge Up", "Cast Spell", "Skill Ch
 
 interface ItemInitiativeMeta {
   initiative: number;
+  ownerId?: string;
 }
 
 let localPlayerRole: "GM" | "PLAYER" = "PLAYER";
+let localPlayerId: string = "";
 let localSelection: string[] = [];
 let localDraftAction = "";
 let localDraftCategory = "";
@@ -41,7 +43,8 @@ function readItemInitiative(item: Item): ItemInitiativeMeta | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Partial<ItemInitiativeMeta>;
   return {
-    initiative: Number.isFinite(value.initiative) ? Number(value.initiative) : 0
+    initiative: Number.isFinite(value.initiative) ? Number(value.initiative) : 0,
+    ownerId: typeof value.ownerId === "string" ? value.ownerId : item.createdUserId
   };
 }
 
@@ -60,7 +63,8 @@ function deriveParticipants(items: Item[]): Participant[] {
     out.push({
       tokenId: item.id,
       name: typeof item.name === "string" && item.name ? item.name : "Token",
-      initiative: meta.initiative
+      initiative: meta.initiative,
+      ownerId: meta.ownerId
     });
   }
   return sortParticipants(out);
@@ -90,12 +94,33 @@ function allReady(): boolean {
 function actionDisplay(p: Participant): string {
   const decl = declarations[p.tokenId];
   if (!decl) return "";
-  const reveal = coreState.phase !== "plan" || decl.revealed;
-  if (reveal) {
-    const prefix = decl.category ? `[${decl.category}] ` : "";
-    return `${prefix}${decl.text}`.trim();
+  
+  // GM can always see actions
+  if (localPlayerRole === "GM") {
+    if (decl.revealed) {
+      const prefix = decl.category ? `[${decl.category}] ` : "";
+      return `${prefix}${decl.text}`.trim();
+    }
+    return decl.ready ? "Ready (hidden)" : "Waiting";
   }
-  return decl.ready ? "Ready" : "Waiting";
+  
+  // Regular players only see revealed actions or their own
+  const isOwner = decl.ownerId === localPlayerId;
+  const canSee = decl.revealed || isOwner;
+  
+  if (!canSee) {
+    return decl.ready ? "Ready" : "Waiting";
+  }
+  
+  const prefix = decl.category ? `[${decl.category}] ` : "";
+  return `${prefix}${decl.text}`.trim();
+}
+
+function canEditToken(p: Participant): boolean {
+  // GM can edit all tokens
+  if (localPlayerRole === "GM") return true;
+  // Players can only edit their own tokens
+  return p.ownerId === localPlayerId;
 }
 
 function formatPhase(phase: Phase): string {
@@ -142,7 +167,12 @@ async function addSelectedToInitiative(): Promise<void> {
   await OBR.scene.items.updateItems(localSelection, (items) => {
     for (const item of items) {
       const meta = item.metadata as Record<string, unknown>;
-      if (!meta[ITEM_META_KEY]) meta[ITEM_META_KEY] = { initiative: 0 };
+      if (!meta[ITEM_META_KEY]) {
+        meta[ITEM_META_KEY] = { 
+          initiative: 0,
+          ownerId: localPlayerRole === "GM" ? localPlayerId : localPlayerId
+        };
+      }
     }
   });
 }
@@ -162,6 +192,13 @@ async function removeSelectedFromInitiative(): Promise<void> {
 async function setMyDeclaration(ready: boolean): Promise<void> {
   const target = selectedParticipant();
   if (!target) return;
+  
+  // Check permissions: only owner or GM can set declaration
+  if (localPlayerRole !== "GM" && target.ownerId !== localPlayerId) {
+    console.warn("Permission denied: cannot edit this token");
+    return;
+  }
+  
   const text = localDraftAction.trim();
   if (ready && !text) return;
 
@@ -171,7 +208,9 @@ async function setMyDeclaration(ready: boolean): Promise<void> {
     ready,
     revealed: coreState.phase !== "plan",
     timestamp: Date.now(),
-    category: localDraftCategory || existing?.category
+    category: localDraftCategory || existing?.category,
+    ownerId: localPlayerId,
+    queue: existing?.queue
   };
   await setDeclaration(target.tokenId, next);
 
@@ -190,6 +229,42 @@ async function setMyDeclaration(ready: boolean): Promise<void> {
       return state;
     });
   }
+}
+
+async function queueAction(text: string, category?: string): Promise<void> {
+  const target = selectedParticipant();
+  if (!target) return;
+  
+  // Check permissions: only owner or GM can queue actions
+  if (localPlayerRole !== "GM" && target.ownerId !== localPlayerId) {
+    console.warn("Permission denied: cannot queue action for this token");
+    return;
+  }
+
+  const existing = declarations[target.tokenId];
+  const queue = existing?.queue ?? [];
+  
+  if (queue.length >= 3) {
+    console.warn("Maximum 3 queued actions allowed");
+    return;
+  }
+
+  queue.push({
+    text: text.trim(),
+    category,
+    timestamp: Date.now()
+  });
+
+  const next: Declaration = {
+    text: existing?.text ?? "",
+    ready: existing?.ready ?? false,
+    revealed: existing?.revealed ?? coreState.phase !== "plan",
+    timestamp: existing?.timestamp ?? Date.now(),
+    category: existing?.category,
+    ownerId: localPlayerId,
+    queue: queue.length > 0 ? queue : undefined
+  };
+  await setDeclaration(target.tokenId, next);
 }
 
 async function revealNow(): Promise<void> {
@@ -281,6 +356,33 @@ function bindEvents(): void {
     void setMyDeclaration(false);
   });
 
+  app.querySelector("#queue-btn")?.addEventListener("click", () => {
+    const text = localDraftAction.trim();
+    if (text) {
+      void queueAction(text, localDraftCategory || undefined);
+      localDraftAction = "";
+      localDraftCategory = "";
+      render();
+    }
+  });
+
+  for (const btn of app.querySelectorAll<HTMLButtonElement>("[data-queue-remove]")) {
+    btn.addEventListener("click", async (e) => {
+      const idx = Number((e.target as HTMLButtonElement).dataset.queueRemove);
+      const target = selectedParticipant();
+      if (!target) return;
+      const existing = declarations[target.tokenId];
+      if (existing?.queue && Number.isFinite(idx)) {
+        const newQueue = existing.queue.filter((_, i) => i !== idx);
+        const next: Declaration = {
+          ...existing,
+          queue: newQueue.length > 0 ? newQueue : undefined
+        };
+        await setDeclaration(target.tokenId, next);
+      }
+    });
+  }
+
   app.querySelector("#copy-log")?.addEventListener("click", () => {
     void copyLog();
   });
@@ -365,28 +467,46 @@ function render(): void {
         ${target
           ? `
             <p class="muted">Editing <strong>${escapeHtml(target.name)}</strong></p>
+            ${target.ownerId && target.ownerId !== localPlayerId && localPlayerRole !== "GM" 
+              ? `<p class="error" style="color: #d32f2f; margin: 8px 0;">⚠️ You are not the owner of this token (owner only).</p>`
+              : ""}
             <label>
               Initiative
-              <input id="initiative-input" type="number" value="${target.initiative}" />
+              <input id="initiative-input" type="number" value="${target.initiative}" ${!canEditToken(target) ? "disabled" : ""} />
             </label>
             <label>
               Action
-              <input id="declaration-input" type="text" placeholder="Declare action for ${escapeHtml(target.name)}" value="${escapeHtml(draftTextValue)}" />
+              <input id="declaration-input" type="text" placeholder="Declare action for ${escapeHtml(target.name)}" value="${escapeHtml(draftTextValue)}" ${!canEditToken(target) ? "disabled" : ""} />
             </label>
             <label>
               Category
-              <select id="category-select">
+              <select id="category-select" ${!canEditToken(target) ? "disabled" : ""}>
                 <option value="">None</option>
                 ${CATEGORY_OPTIONS.map((option) => `<option value="${option}" ${draftCategoryValue === option ? "selected" : ""}>${option}</option>`).join("")}
               </select>
             </label>
             <div class="button-row">
-              <button id="update-btn" type="button">Save Draft</button>
-              <button id="ready-btn" type="button" class="primary">${decl?.ready ? "Update Ready" : "Ready"}</button>
-              <button id="remove-initiative" type="button">Remove Token</button>
+              <button id="update-btn" type="button" ${!canEditToken(target) ? "disabled" : ""}>Save Draft</button>
+              <button id="ready-btn" type="button" class="primary" ${!canEditToken(target) ? "disabled" : ""}>${decl?.ready ? "Update Ready" : "Ready"}</button>
+              <button id="queue-btn" type="button" ${!canEditToken(target) || localDraftAction.trim() === "" ? "disabled" : ""}>+ Queue</button>
+              <button id="remove-initiative" type="button" ${!canEditToken(target) ? "disabled" : ""}>Remove Token</button>
             </div>
+            ${decl?.queue && decl.queue.length > 0
+              ? `
+                <h3>Queued Actions (${decl.queue.length})</h3>
+                <div class="queue-list">
+                  ${decl.queue.map((qa, idx) => `
+                    <div class="queue-item">
+                      <span>${idx + 1}. ${decl.category ? `[${decl.category}] ` : ""}${escapeHtml(qa.text.slice(0, 40))}${qa.text.length > 40 ? "..." : ""}</span>
+                      <button type="button" data-queue-remove="${idx}" class="queue-remove">✕</button>
+                    </div>
+                  `).join("")}
+                </div>
+              `
+              : ""
+            }
             <div class="template-grid">
-              ${CATEGORY_OPTIONS.map((option) => `<button data-template="${option}" type="button">${option}</button>`).join("")}
+              ${CATEGORY_OPTIONS.map((option) => `<button data-template="${option}" type="button" ${!canEditToken(target) ? "disabled" : ""}>${option}</button>`).join("")}
             </div>
             <h3>Quick Reuse</h3>
             <div class="history-grid">
@@ -501,7 +621,8 @@ async function registerContextMenu(): Promise<void> {
           for (const item of items) {
             const meta = item.metadata as Record<string, unknown>;
             meta[ITEM_META_KEY] = {
-              initiative: Number.isFinite(initiative) ? initiative : 0
+              initiative: Number.isFinite(initiative) ? initiative : 0,
+              ownerId: item.createdUserId
             };
           }
         });
@@ -530,12 +651,14 @@ async function refreshParticipantsFromScene(): Promise<void> {
 
 async function bootstrap(): Promise<void> {
   await OBR.onReady(async () => {
-    const [role, sceneIsReady, initialSelection] = await Promise.all([
+    const [role, playerId, sceneIsReady, initialSelection] = await Promise.all([
       OBR.player.getRole(),
+      OBR.player.getId(),
       OBR.scene.isReady(),
       OBR.player.getSelection()
     ]);
     localPlayerRole = role;
+    localPlayerId = playerId;
     sceneReady = sceneIsReady;
     localSelection = initialSelection ?? [];
 

@@ -1,5 +1,5 @@
 import OBR from "@owlbear-rodeo/sdk";
-import type { CoreState, Declaration, Phase } from "./types";
+import type { CoreState, Declaration, Phase, QueuedAction } from "./types";
 
 export const NAMESPACE = "com.rumble.initiative";
 export const CORE_KEY = `${NAMESPACE}/core`;
@@ -60,12 +60,28 @@ export function sanitizeDeclaration(input: unknown): Declaration | null {
   if (input === null || input === undefined) return null;
   if (typeof input !== "object") return null;
   const value = input as Partial<Declaration>;
+  
+  // Sanitize queue
+  let queue: QueuedAction[] | undefined;
+  if (Array.isArray(value.queue)) {
+    queue = value.queue
+      .filter((item) => item && typeof item === "object")
+      .map((item) => ({
+        text: typeof item.text === "string" ? item.text.slice(0, MAX_DECL_TEXT) : "",
+        category: typeof item.category === "string" ? item.category : undefined,
+        timestamp: Number.isFinite(item.timestamp) ? Number(item.timestamp) : Date.now()
+      }))
+      .slice(0, 3); // Max 3 queued actions
+  }
+  
   return {
     text: typeof value.text === "string" ? value.text.slice(0, MAX_DECL_TEXT) : "",
     ready: Boolean(value.ready),
     revealed: Boolean(value.revealed),
     timestamp: Number.isFinite(value.timestamp) ? Number(value.timestamp) : Date.now(),
-    category: typeof value.category === "string" ? value.category : undefined
+    category: typeof value.category === "string" ? value.category : undefined,
+    ownerId: typeof value.ownerId === "string" ? value.ownerId : undefined,
+    queue: queue && queue.length > 0 ? queue : undefined
   };
 }
 
