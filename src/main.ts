@@ -314,13 +314,6 @@ function escapeHtml(input: string): string {
 }
 
 function bindEvents(): void {
-  app.querySelector("#initiative-input")?.addEventListener("change", (event) => {
-    const value = Number((event.target as HTMLInputElement).value);
-    const target = selectedParticipant();
-    if (!target) return;
-    if (Number.isFinite(value)) void setItemInitiative(target.tokenId, value);
-  });
-
   app.querySelector("#add-initiative")?.addEventListener("click", () => {
     void addSelectedToInitiative();
   });
@@ -341,41 +334,6 @@ function bindEvents(): void {
     void setMyDeclaration(true);
   });
 
-  app.querySelector("#update-btn")?.addEventListener("click", () => {
-    void setMyDeclaration(false);
-  });
-
-  app.querySelector("#queue-btn")?.addEventListener("click", () => {
-    const text = localDraftAction.trim();
-    if (text) {
-      void queueAction(text, localDraftCategory || undefined);
-      localDraftAction = "";
-      localDraftCategory = "";
-      render();
-    }
-  });
-
-  for (const btn of app.querySelectorAll<HTMLButtonElement>("[data-queue-remove]")) {
-    btn.addEventListener("click", async (e) => {
-      const idx = Number((e.target as HTMLButtonElement).dataset.queueRemove);
-      const target = selectedParticipant();
-      if (!target) return;
-      const existing = declarations[target.tokenId];
-      if (existing?.queue && Number.isFinite(idx)) {
-        const newQueue = existing.queue.filter((_, i) => i !== idx);
-        const next: Declaration = {
-          ...existing,
-          queue: newQueue.length > 0 ? newQueue : undefined
-        };
-        await setDeclaration(target.tokenId, next);
-      }
-    });
-  }
-
-  app.querySelector("#copy-log")?.addEventListener("click", () => {
-    void copyLog();
-  });
-
   app.querySelector("#phase-next")?.addEventListener("click", () => {
     void advancePhase();
   });
@@ -392,21 +350,6 @@ function bindEvents(): void {
     void resetCombat();
   });
 
-  for (const button of app.querySelectorAll<HTMLButtonElement>("[data-history]")) {
-    button.addEventListener("click", () => {
-      localDraftAction = button.dataset.history ?? "";
-      render();
-    });
-  }
-  for (const button of app.querySelectorAll<HTMLButtonElement>("[data-template]")) {
-    button.addEventListener("click", () => {
-      const value = button.dataset.template ?? "";
-      const prefix = localDraftAction.trim() ? `${localDraftAction.trim()} | ` : "";
-      localDraftAction = `${prefix}${value}`;
-      render();
-    });
-  }
-
   for (const row of app.querySelectorAll<HTMLLIElement>("[data-token]")) {
     row.addEventListener("click", () => {
       const id = row.dataset.token;
@@ -420,7 +363,7 @@ function render(): void {
   const candidate = selectedItemIsCandidate();
   const decl = target ? declarations[target.tokenId] : undefined;
   const ready = readyCount();
-  const logPreview = [...coreState.log].reverse().slice(0, 8);
+  const logPreview = [...coreState.log].reverse().slice(0, 5);
   const isGm = localPlayerRole === "GM";
 
   if (!sceneReady) {
@@ -439,86 +382,58 @@ function render(): void {
 
   app.innerHTML = `
     <main class="layout">
-      <section class="panel">
-        <div class="banner">
-          <h1>Rumble Initiative Tracker</h1>
-          <p>Round ${coreState.roundNumber} | Rumble ${coreState.rumbleNumber}/3 | Phase: ${formatPhase(coreState.phase)}</p>
-          <p class="muted cue">${rumbleEffectCue(coreState.rumbleNumber)}</p>
-        </div>
-        <div class="stats-row">
-          <span class="pill">Ready ${ready}/${participants.length}</span>
-          <span class="pill">${coreState.phase === "plan" && allReady() ? "All ready" : "Waiting"}</span>
+      <section class="header-section">
+        <h1>Rumble Initiative Tracker</h1>
+        <div class="header-info">
+          <span>Round ${coreState.roundNumber} | Rumble ${coreState.rumbleNumber}/3 | ${formatPhase(coreState.phase)}</span>
+          <div class="stats">
+            <span class="stat-item">Ready: ${ready}/${participants.length}</span>
+          </div>
         </div>
       </section>
 
-      <section class="panel controls">
-        <h2>Selected Token</h2>
-        ${target
-          ? `
-            <p class="muted">Editing <strong>${escapeHtml(target.name)}</strong></p>
-            ${target.ownerId && target.ownerId !== localPlayerId && localPlayerRole !== "GM" 
-              ? `<p class="error" style="color: #d32f2f; margin: 8px 0;">⚠️ You are not the owner of this token (owner only).</p>`
-              : ""}
-            <label>
-              Initiative
-              <input id="initiative-input" type="number" value="${target.initiative}" ${!canEditToken(target) ? "disabled" : ""} />
-            </label>
+      ${target && canEditToken(target)
+        ? `
+          <section class="editor-section">
+            <h2>Declare Action</h2>
             <label>
               Action
-              <input id="declaration-input" type="text" placeholder="Declare action for ${escapeHtml(target.name)}" value="${escapeHtml(draftTextValue)}" ${!canEditToken(target) ? "disabled" : ""} />
+              <input id="declaration-input" type="text" placeholder="What does ${escapeHtml(target.name)} do?" value="${escapeHtml(draftTextValue)}" />
             </label>
             <label>
               Category
-              <select id="category-select" ${!canEditToken(target) ? "disabled" : ""}>
+              <select id="category-select">
                 <option value="">None</option>
                 ${CATEGORY_OPTIONS.map((option) => `<option value="${option}" ${draftCategoryValue === option ? "selected" : ""}>${option}</option>`).join("")}
               </select>
             </label>
-            <div class="button-row">
-              <button id="ready-btn" type="button" class="primary" ${!canEditToken(target) ? "disabled" : ""}>${decl?.ready ? "Mark Ready" : "Ready"}</button>
-              <button id="remove-initiative" type="button" ${!canEditToken(target) ? "disabled" : ""}>Remove</button>
-            </div>
-            ${
-              quickHistory.length > 0
-                ? `
-                  <div class="quick-history">
-                    ${quickHistory.slice(0, 3).map((entry) => `<button data-history="${escapeHtml(entry)}" type="button" class="history-btn">${escapeHtml(entry.slice(0, 30))}</button>`).join("")}
-                  </div>
-                `
-                : ""
-            }
+            <button id="ready-btn" type="button" class="primary">${decl?.ready ? "Update Ready" : "Ready"}</button>
+          </section>
+        `
+        : candidate
+          ? `
+            <section class="editor-section">
+              <button id="add-initiative" type="button" class="primary">Add to Initiative</button>
+            </section>
           `
-          : candidate
-            ? `
-              <p class="muted">Selected token is not yet in initiative.</p>
-              <div class="button-row">
-                <button id="add-initiative" type="button" class="primary">Add Selected Token</button>
-              </div>
-            `
-            : `
-              <p class="muted">Select a token in the scene to edit initiative or declare an action.</p>
-            `
-        }
-      </section>
+          : ""
+      }
 
-      <section class="panel">
+      <section class="list-section">
         <h2>Initiative Order</h2>
         ${
           participants.length === 0
-            ? '<p class="muted">No tokens in initiative yet. Use the context menu on a token to add it.</p>'
+            ? '<p class="muted">No tokens in initiative yet.</p>'
             : `
               <ul class="initiative-list">
                 ${participants
                   .map((p) => {
                     const action = actionDisplay(p);
                     const mineClass = p.tokenId === localSelection[0] ? "mine" : "";
-                    const readyMark = isReady(p) ? '<span class="pill">Ready</span>' : "";
                     return `<li class="entry ${mineClass}" data-token="${escapeHtml(p.tokenId)}">
-                      <div>
-                        <strong>${escapeHtml(p.name)}</strong>
-                        <div class="muted">Init ${p.initiative}</div>
-                      </div>
-                      <div class="action">${escapeHtml(action || "-")} ${readyMark}</div>
+                      <span class="name">${escapeHtml(p.name)}</span>
+                      <span class="init">${p.initiative}</span>
+                      ${action ? `<span class="action">${escapeHtml(action)}</span>` : ""}
                     </li>`;
                   })
                   .join("")}
@@ -527,31 +442,31 @@ function render(): void {
         }
       </section>
 
-      <section class="panel">
-        <h2>Rumble Controls ${isGm ? "" : "(GM only)"}</h2>
-        <div class="button-row wrap">
-          <button id="phase-next" type="button" ${isGm ? "" : "disabled"}>Advance Phase</button>
-          <button id="reveal-now" type="button" ${isGm ? "" : "disabled"}>Reveal Now</button>
-          <button id="new-rumble" type="button" ${isGm ? "" : "disabled"}>Next Rumble</button>
-          <button id="reset-combat" type="button" ${isGm ? "" : "disabled"}>Reset Combat</button>
-        </div>
-      </section>
+      ${isGm 
+        ? `
+          <section class="controls-section">
+            <button id="phase-next" type="button">Advance Phase</button>
+            <button id="reveal-now" type="button">Reveal Now</button>
+            <button id="new-rumble" type="button">Next Rumble</button>
+            <button id="reset-combat" type="button">Reset</button>
+          </section>
+        `
+        : ""
+      }
 
-      <section class="panel">
-        <div class="row-between">
-          <h2>Combat Log</h2>
-          <button id="copy-log" type="button">Copy</button>
-        </div>
-        <div class="log">
-          ${
-            logPreview.length
-              ? logPreview
-                  .map((entry) => `<p><span class="muted">${new Date(entry.timestamp).toLocaleTimeString()}</span> ${escapeHtml(entry.tokenName)}: ${escapeHtml(entry.text)}</p>`)
-                  .join("")
-              : '<p class="muted">No log entries yet.</p>'
-          }
-        </div>
-      </section>
+      ${logPreview.length > 0
+        ? `
+          <section class="log-section">
+            <h2>Recent Log</h2>
+            <div class="log">
+              ${logPreview
+                .map((entry) => `<p><strong>${escapeHtml(entry.tokenName)}:</strong> ${escapeHtml(entry.text)}</p>`)
+                .join("")}
+            </div>
+          </section>
+        `
+        : ""
+      }
     </main>
   `;
   bindEvents();
