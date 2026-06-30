@@ -40,26 +40,8 @@ export function App() {
   const [obrReady, setObrReady] = useState(false);
   const initializingRef = React.useRef(true);
 
-  // Initialize theme
-  useEffect(() => {
-    const setupTheme = async () => {
-      try {
-        const t = await OBR.theme.getTheme();
-        setTheme(t as any);
-        applyThemeToDOM(t as any);
-      } catch (e) {
-        console.warn("Failed to initialize theme:", e);
-      }
-    };
-    
-    setupTheme();
-    
-    const unsubscribe = OBR.theme.onChange((t) => {
-      setTheme(t as any);
-      applyThemeToDOM(t as any);
-    });
-    return unsubscribe;
-  }, []);
+  // Initialize theme - REMOVED, will be done inside OBR.onReady
+  // useEffect(() => { ... })
 
   const applyThemeToDOM = (t: any) => {
     const root = document.documentElement;
@@ -82,115 +64,159 @@ export function App() {
     const setup = async () => {
       try {
         await OBR.onReady(async () => {
-          // 1. Get initial player state
-          const [r, pid, pname, sceneIsReady, sel] = await Promise.all([
-            OBR.player.getRole(),
-            OBR.player.getId(),
-            OBR.player.getName(),
-            OBR.scene.isReady(),
-            OBR.player.getSelection(),
-          ]);
-          setRole(r);
-          setPlayerId(pid);
-          setPlayerName(pname);
-          setSceneReady(sceneIsReady);
-          setSelection(sel ?? []);
+          try {
+            // 0. Initialize theme first
+            try {
+              const t = await OBR.theme.getTheme();
+              setTheme(t as any);
+              applyThemeToDOM(t as any);
+              
+              OBR.theme.onChange((newTheme) => {
+                setTheme(newTheme as any);
+                applyThemeToDOM(newTheme as any);
+              });
+            } catch (e) {
+              console.warn("Failed to initialize theme:", e);
+            }
 
-          // 2. Load all initial data
-          const [initialMetadata, initialItems, allPlayers] = await Promise.all([
-            OBR.room.getMetadata(),
-            OBR.scene.items.getItems(),
-            (async () => {
-              try {
-                // Try to get players from the scene or room
-                const items = await OBR.scene.items.getItems();
-                const playerMap = new Map<string, Player>();
-                for (const item of items) {
-                  if (item.createdUserId && !playerMap.has(item.createdUserId)) {
-                    playerMap.set(item.createdUserId, {
-                      id: item.createdUserId,
-                      name: "Player",
-                      role: "PLAYER",
-                      color: "#000000",
-                    } as Player);
+            // 1. Get initial player state
+            const [r, pid, pname, sceneIsReady, sel] = await Promise.all([
+              OBR.player.getRole(),
+              OBR.player.getId(),
+              OBR.player.getName(),
+              OBR.scene.isReady(),
+              OBR.player.getSelection(),
+            ]);
+            setRole(r);
+            setPlayerId(pid);
+            setPlayerName(pname);
+            setSceneReady(sceneIsReady);
+            setSelection(sel ?? []);
+
+            // 2. Load all initial data
+            const [initialMetadata, initialItems, allPlayers] = await Promise.all([
+              OBR.room.getMetadata(),
+              OBR.scene.items.getItems(),
+              (async () => {
+                try {
+                  const items = await OBR.scene.items.getItems();
+                  const playerMap = new Map<string, Player>();
+                  for (const item of items) {
+                    if (item.createdUserId && !playerMap.has(item.createdUserId)) {
+                      playerMap.set(item.createdUserId, {
+                        id: item.createdUserId,
+                        name: "Player",
+                        role: "PLAYER",
+                        color: "#000000",
+                      } as Player);
+                    }
                   }
+                  return Array.from(playerMap.values());
+                } catch {
+                  return [];
                 }
-                return Array.from(playerMap.values());
-              } catch {
-                return [];
-              }
-            })(),
-          ]);
+              })(),
+            ]);
 
-          setCoreState(sanitizeCore(initialMetadata[CORE_KEY]));
-          setDeclarations(readDeclarations(initialMetadata));
-          setParticipants(deriveParticipants(initialItems as Item[]));
-          setPlayers(allPlayers);
+            setCoreState(sanitizeCore(initialMetadata[CORE_KEY]));
+            setDeclarations(readDeclarations(initialMetadata));
+            setParticipants(deriveParticipants(initialItems as Item[]));
+            setPlayers(allPlayers);
 
-          if (sceneIsReady) {
-            await OBR.scene.items.getItems().then((items) => {
+            if (sceneIsReady) {
+              const items = await OBR.scene.items.getItems();
               setParticipants(deriveParticipants(items as Item[]));
-            });
+            }
+
+            // Wait for OBR to be fully ready for listener callbacks
+            await new Promise((resolve) => setTimeout(resolve, 250));
+
+            // 3. AFTER all initial state is set and a small delay, set up the listeners
+            const unsubscribers: Array<(() => void) | void> = [];
+
+            try {
+              unsubscribers.push(
+                OBR.player.onChange((player) => {
+                  try {
+                    setRole(player.role);
+                    setSelection(player.selection ?? []);
+                  } catch (e) {
+                    console.warn("Error in player onChange:", e);
+                  }
+                })
+              );
+            } catch (e) {
+              console.warn("Failed to register player onChange:", e);
+            }
+
+            try {
+              unsubscribers.push(
+                OBR.scene.onReadyChange((isReady) => {
+                  try {
+                    setSceneReady(isReady);
+                  } catch (e) {
+                    console.warn("Error in onReadyChange:", e);
+                  }
+                })
+              );
+            } catch (e) {
+              console.warn("Failed to register onReadyChange:", e);
+            }
+
+            try {
+              unsubscribers.push(
+                OBR.scene.items.onChange((items) => {
+                  try {
+                    const derived = deriveParticipants(items as Item[]);
+                    setParticipants(derived);
+                  } catch (e) {
+                    console.warn("Error in items onChange:", e);
+                  }
+                })
+              );
+            } catch (e) {
+              console.warn("Failed to register items onChange:", e);
+            }
+
+            try {
+              unsubscribers.push(
+                onMetadataChange((metadata) => {
+                  try {
+                    setCoreState(sanitizeCore(metadata[CORE_KEY]));
+                    setDeclarations(readDeclarations(metadata));
+                  } catch (e) {
+                    console.warn("Error in metadata onChange:", e);
+                  }
+                })
+              );
+            } catch (e) {
+              console.warn("Failed to register metadata onChange:", e);
+            }
+
+            // Mark initialization as complete
+            initializingRef.current = false;
+            setObrReady(true);
+
+            // Return cleanup function
+            return () => {
+              unsubscribers.forEach((unsub) => {
+                try {
+                  if (typeof unsub === "function") unsub();
+                } catch (e) {
+                  console.warn("Error during listener cleanup:", e);
+                }
+              });
+            };
+          } catch (innerError) {
+            console.error("Error inside onReady callback:", innerError);
+            initializingRef.current = false;
+            setObrReady(true);
           }
-
-          // 3. AFTER all initial state is set, set up the listeners
-          const unsubscribers = [
-            OBR.player.onChange((player) => {
-              if (!initializingRef.current) {
-                try {
-                  setRole(player.role);
-                  setSelection(player.selection ?? []);
-                } catch (e) {
-                  console.warn("Error in player onChange:", e);
-                }
-              }
-            }),
-            OBR.scene.onReadyChange((isReady) => {
-              if (!initializingRef.current) {
-                try {
-                  setSceneReady(isReady);
-                } catch (e) {
-                  console.warn("Error in onReadyChange:", e);
-                }
-              }
-            }),
-            OBR.scene.items.onChange((items) => {
-              if (!initializingRef.current) {
-                try {
-                  const derived = deriveParticipants(items as Item[]);
-                  setParticipants(derived);
-                } catch (e) {
-                  console.warn("Error in items onChange:", e);
-                }
-              }
-            }),
-            onMetadataChange((metadata) => {
-              if (!initializingRef.current) {
-                try {
-                  setCoreState(sanitizeCore(metadata[CORE_KEY]));
-                  setDeclarations(readDeclarations(metadata));
-                } catch (e) {
-                  console.warn("Error in metadata onChange:", e);
-                }
-              }
-            }),
-          ];
-
-          // Mark initialization as complete
-          initializingRef.current = false;
-          setObrReady(true);
-
-          // Return cleanup function to unsubscribe from listeners
-          return () => {
-            unsubscribers.forEach((unsub) => {
-              if (typeof unsub === "function") unsub();
-            });
-          };
         });
       } catch (e) {
         console.error("OBR initialization failed:", e);
         initializingRef.current = false;
-        setObrReady(true); // Set true even on error so UI shows
+        setObrReady(true);
       }
     };
 
