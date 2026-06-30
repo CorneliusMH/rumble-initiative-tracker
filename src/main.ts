@@ -95,23 +95,12 @@ function actionDisplay(p: Participant): string {
   const decl = declarations[p.tokenId];
   if (!decl) return "";
   
-  // GM can always see actions
-  if (localPlayerRole === "GM") {
-    if (decl.revealed) {
-      const prefix = decl.category ? `[${decl.category}] ` : "";
-      return `${prefix}${decl.text}`.trim();
-    }
-    return decl.ready ? "Ready (hidden)" : "Waiting";
-  }
-  
-  // Regular players only see revealed actions or their own
-  const isOwner = decl.ownerId === localPlayerId;
-  const canSee = decl.revealed || isOwner;
-  
-  if (!canSee) {
+  // During plan phase, only show ready status, never reveal actions
+  if (coreState.phase === "plan") {
     return decl.ready ? "Ready" : "Waiting";
   }
   
+  // After plan phase, show full action details
   const prefix = decl.category ? `[${decl.category}] ` : "";
   return `${prefix}${decl.text}`.trim();
 }
@@ -486,36 +475,18 @@ function render(): void {
               </select>
             </label>
             <div class="button-row">
-              <button id="update-btn" type="button" ${!canEditToken(target) ? "disabled" : ""}>Save Draft</button>
-              <button id="ready-btn" type="button" class="primary" ${!canEditToken(target) ? "disabled" : ""}>${decl?.ready ? "Update Ready" : "Ready"}</button>
-              <button id="queue-btn" type="button" ${!canEditToken(target) || localDraftAction.trim() === "" ? "disabled" : ""}>+ Queue</button>
-              <button id="remove-initiative" type="button" ${!canEditToken(target) ? "disabled" : ""}>Remove Token</button>
+              <button id="ready-btn" type="button" class="primary" ${!canEditToken(target) ? "disabled" : ""}>${decl?.ready ? "Mark Ready" : "Ready"}</button>
+              <button id="remove-initiative" type="button" ${!canEditToken(target) ? "disabled" : ""}>Remove</button>
             </div>
-            ${decl?.queue && decl.queue.length > 0
-              ? `
-                <h3>Queued Actions (${decl.queue.length})</h3>
-                <div class="queue-list">
-                  ${decl.queue.map((qa, idx) => `
-                    <div class="queue-item">
-                      <span>${idx + 1}. ${decl.category ? `[${decl.category}] ` : ""}${escapeHtml(qa.text.slice(0, 40))}${qa.text.length > 40 ? "..." : ""}</span>
-                      <button type="button" data-queue-remove="${idx}" class="queue-remove">✕</button>
-                    </div>
-                  `).join("")}
-                </div>
-              `
-              : ""
+            ${
+              quickHistory.length > 0
+                ? `
+                  <div class="quick-history">
+                    ${quickHistory.slice(0, 3).map((entry) => `<button data-history="${escapeHtml(entry)}" type="button" class="history-btn">${escapeHtml(entry.slice(0, 30))}</button>`).join("")}
+                  </div>
+                `
+                : ""
             }
-            <div class="template-grid">
-              ${CATEGORY_OPTIONS.map((option) => `<button data-template="${option}" type="button" ${!canEditToken(target) ? "disabled" : ""}>${option}</button>`).join("")}
-            </div>
-            <h3>Quick Reuse</h3>
-            <div class="history-grid">
-              ${
-                quickHistory.length
-                  ? quickHistory.map((entry) => `<button data-history="${escapeHtml(entry)}" type="button">${escapeHtml(entry)}</button>`).join("")
-                  : '<p class="muted">No saved actions yet.</p>'
-              }
-            </div>
           `
           : candidate
             ? `
