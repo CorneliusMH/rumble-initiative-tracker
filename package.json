@@ -1,7 +1,7 @@
 {
   "name": "rumble-initiative-tracker",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,9 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@owlbear-rodeo/sdk": "^3.0.0"
+    "@owlbear-rodeo/sdk": "^3.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "typescript": "^5.8.3",
     "vite": "^5.4.19"
   }

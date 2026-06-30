@@ -10,20 +10,28 @@
   box-sizing: border-box;
 }
 
-body {
+html,
+body,
+#app {
   margin: 0;
   padding: 0;
+  height: 100%;
+}
+
+body {
   background: #2a2a2a;
 }
 
 .layout {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   gap: 0;
 }
 
 section {
   border-bottom: 1px solid #444;
+  overflow-y: auto;
 }
 
 section:last-child {
@@ -33,6 +41,7 @@ section:last-child {
 .header-section {
   padding: 12px;
   border-bottom: 2px solid #444;
+  flex-shrink: 0;
 }
 
 .header-section h1 {
@@ -56,31 +65,26 @@ section:last-child {
   display: inline-block;
 }
 
-.editor-section {
+.editor-section,
+.bulk-actions-section {
   padding: 12px;
   background: #333;
+  flex-shrink: 0;
 }
 
-.editor-section h2 {
+.editor-section h2,
+.bulk-actions-section h2 {
   margin: 0 0 8px 0;
   font-size: 0.95rem;
 }
 
-.owner-info {
+.owner-info,
+.delay-info {
   margin-bottom: 10px;
   padding: 8px;
   background: #2a2a2a;
   border-left: 2px solid #0d47a1;
   border-radius: 3px;
-}
-
-.owner-info label {
-  margin-bottom: 6px;
-}
-
-.owner-info button {
-  margin-top: 6px;
-  width: 100%;
 }
 
 label {
@@ -89,10 +93,9 @@ label {
   font-size: 0.8rem;
 }
 
-label > span {
+label > * {
   display: block;
-  margin-bottom: 3px;
-  color: #aaa;
+  margin-top: 3px;
 }
 
 input,
@@ -122,6 +125,8 @@ button {
   cursor: pointer;
   font-size: 0.85rem;
   transition: background 0.2s;
+  margin-top: 8px;
+  margin-right: 6px;
 }
 
 button:hover:not(:disabled) {
@@ -146,6 +151,8 @@ button:disabled {
 .list-section {
   flex: 1;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .list-section h2 {
@@ -155,12 +162,15 @@ button:disabled {
   background: #333;
   border-bottom: 1px solid #444;
   font-weight: 600;
+  flex-shrink: 0;
 }
 
 .initiative-list {
   list-style: none;
   margin: 0;
   padding: 0;
+  flex: 1;
+  overflow: auto;
 }
 
 .entry {
@@ -202,42 +212,17 @@ button:disabled {
 
 .controls-section {
   padding: 10px 12px;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  display: flex;
   gap: 6px;
   background: #333;
   border-top: 1px solid #444;
-}
-
-.log-section {
-  padding: 12px;
-  background: #333;
-  border-top: 1px solid #444;
-  font-size: 0.75rem;
-}
-
-.log-section h2 {
-  margin: 0 0 8px 0;
-  font-size: 0.9rem;
-}
-
-.log {
-  display: grid;
-  gap: 4px;
-}
-
-.log p {
-  margin: 0;
-  color: #aaa;
-}
-
-.log strong {
-  color: #89b4fa;
-  font-weight: 600;
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .muted {
   color: #888;
+  font-size: 0.85rem;
 }
 
 @media (max-width: 520px) {
@@ -248,9 +233,5 @@ button:disabled {
 
   .action {
     min-width: auto;
-  }
-
-  .controls-section {
-    grid-template-columns: repeat(2, 1fr);
   }
 }

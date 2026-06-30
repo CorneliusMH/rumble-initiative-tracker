@@ -5,6 +5,7 @@ export interface Participant {
   name: string;
   initiative: number;
   ownerId?: string;
+  delay?: number;
 }
 
 export interface QueuedAction {
