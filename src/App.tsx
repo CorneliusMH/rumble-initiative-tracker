@@ -81,6 +81,7 @@ export function App() {
     const setup = async () => {
       try {
         await OBR.onReady(async () => {
+          // 1. Get initial player state
           const [r, pid, pname, sceneIsReady, sel] = await Promise.all([
             OBR.player.getRole(),
             OBR.player.getId(),
@@ -94,25 +95,7 @@ export function App() {
           setSceneReady(sceneIsReady);
           setSelection(sel ?? []);
 
-          // Subscribe to changes
-          OBR.player.onChange((player) => {
-            setRole(player.role);
-            setSelection(player.selection ?? []);
-          });
-
-          OBR.scene.onReadyChange(setSceneReady);
-
-          OBR.scene.items.onChange((items) => {
-            const derived = deriveParticipants(items as Item[]);
-            setParticipants(derived);
-          });
-
-          onMetadataChange((metadata) => {
-            setCoreState(sanitizeCore(metadata[CORE_KEY]));
-            setDeclarations(readDeclarations(metadata));
-          });
-
-          // Load initial data
+          // 2. Load all initial data
           const [initialMetadata, initialItems, allPlayers] = await Promise.all([
             OBR.room.getMetadata(),
             OBR.scene.items.getItems(),
@@ -149,8 +132,32 @@ export function App() {
               setParticipants(deriveParticipants(items as Item[]));
             });
           }
+
+          // 3. AFTER all initial state is set, set up the listeners
+          const unsubscribers = [
+            OBR.player.onChange((player) => {
+              setRole(player.role);
+              setSelection(player.selection ?? []);
+            }),
+            OBR.scene.onReadyChange(setSceneReady),
+            OBR.scene.items.onChange((items) => {
+              const derived = deriveParticipants(items as Item[]);
+              setParticipants(derived);
+            }),
+            onMetadataChange((metadata) => {
+              setCoreState(sanitizeCore(metadata[CORE_KEY]));
+              setDeclarations(readDeclarations(metadata));
+            }),
+          ];
           
           setObrReady(true);
+          
+          // Return cleanup function to unsubscribe from listeners
+          return () => {
+            unsubscribers.forEach((unsub) => {
+              if (typeof unsub === "function") unsub();
+            });
+          };
         });
       } catch (e) {
         console.error("OBR initialization failed:", e);
