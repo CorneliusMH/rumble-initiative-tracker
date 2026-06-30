@@ -137,25 +137,41 @@ export function App() {
           const unsubscribers = [
             OBR.player.onChange((player) => {
               if (!initializingRef.current) {
-                setRole(player.role);
-                setSelection(player.selection ?? []);
+                try {
+                  setRole(player.role);
+                  setSelection(player.selection ?? []);
+                } catch (e) {
+                  console.warn("Error in player onChange:", e);
+                }
               }
             }),
             OBR.scene.onReadyChange((isReady) => {
               if (!initializingRef.current) {
-                setSceneReady(isReady);
+                try {
+                  setSceneReady(isReady);
+                } catch (e) {
+                  console.warn("Error in onReadyChange:", e);
+                }
               }
             }),
             OBR.scene.items.onChange((items) => {
               if (!initializingRef.current) {
-                const derived = deriveParticipants(items as Item[]);
-                setParticipants(derived);
+                try {
+                  const derived = deriveParticipants(items as Item[]);
+                  setParticipants(derived);
+                } catch (e) {
+                  console.warn("Error in items onChange:", e);
+                }
               }
             }),
             onMetadataChange((metadata) => {
               if (!initializingRef.current) {
-                setCoreState(sanitizeCore(metadata[CORE_KEY]));
-                setDeclarations(readDeclarations(metadata));
+                try {
+                  setCoreState(sanitizeCore(metadata[CORE_KEY]));
+                  setDeclarations(readDeclarations(metadata));
+                } catch (e) {
+                  console.warn("Error in metadata onChange:", e);
+                }
               }
             }),
           ];
