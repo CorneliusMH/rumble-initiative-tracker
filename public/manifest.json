@@ -1,6 +1,6 @@
 {
   "name": "Rumble Initiative Tracker",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "manifest_version": 1,
   "author": "Rumble",
   "description": "Token-based three-rumble initiative tracker with declare/reveal phases.",

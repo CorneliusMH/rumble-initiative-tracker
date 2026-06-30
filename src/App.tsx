@@ -97,25 +97,7 @@ export function App() {
             const [initialMetadata, initialItems, allPlayers] = await Promise.all([
               OBR.room.getMetadata(),
               OBR.scene.items.getItems(),
-              (async () => {
-                try {
-                  const items = await OBR.scene.items.getItems();
-                  const playerMap = new Map<string, Player>();
-                  for (const item of items) {
-                    if (item.createdUserId && !playerMap.has(item.createdUserId)) {
-                      playerMap.set(item.createdUserId, {
-                        id: item.createdUserId,
-                        name: "Player",
-                        role: "PLAYER",
-                        color: "#000000",
-                      } as Player);
-                    }
-                  }
-                  return Array.from(playerMap.values());
-                } catch {
-                  return [];
-                }
-              })(),
+              OBR.party.getPlayers(),
             ]);
 
             setCoreState(sanitizeCore(initialMetadata[CORE_KEY]));
@@ -191,6 +173,20 @@ export function App() {
               );
             } catch (e) {
               console.warn("Failed to register metadata onChange:", e);
+            }
+
+            try {
+              unsubscribers.push(
+                OBR.party.onChange((updatedPlayers) => {
+                  try {
+                    setPlayers(updatedPlayers);
+                  } catch (e) {
+                    console.warn("Error in party onChange:", e);
+                  }
+                })
+              );
+            } catch (e) {
+              console.warn("Failed to register party onChange:", e);
             }
 
             // Mark initialization as complete
