@@ -19,6 +19,7 @@ interface ItemInitiativeMeta {
   initiative: number;
   ownerId?: string;
   delay?: number;
+  excluded?: boolean;
 }
 
 export function App() {
@@ -38,6 +39,9 @@ export function App() {
   const [bulkSelection, setBulkSelection] = useState<string[]>([]);
   const [theme, setTheme] = useState<{ mode: string; text: { primary: string }; background: { default: string }; primary: { main: string } } | null>(null);
   const [obrReady, setObrReady] = useState(false);
+  const [editingInitiativeId, setEditingInitiativeId] = useState<string | null>(null);
+  const [editingInitiativeValue, setEditingInitiativeValue] = useState("");
+  const roleRef = React.useRef<"GM" | "PLAYER">("PLAYER");
   const initializingRef = React.useRef(true);
 
   // Initialize theme - REMOVED, will be done inside OBR.onReady
@@ -88,6 +92,7 @@ export function App() {
               OBR.player.getSelection(),
             ]);
             setRole(r);
+            roleRef.current = r;
             setPlayerId(pid);
             setPlayerName(pname);
             setSceneReady(sceneIsReady);
@@ -102,12 +107,12 @@ export function App() {
 
             setCoreState(sanitizeCore(initialMetadata[CORE_KEY]));
             setDeclarations(readDeclarations(initialMetadata));
-            setParticipants(deriveParticipants(initialItems as Item[]));
+            setParticipants(deriveParticipants(initialItems as Item[], r));
             setPlayers(allPlayers);
 
             if (sceneIsReady) {
               const items = await OBR.scene.items.getItems();
-              setParticipants(deriveParticipants(items as Item[]));
+              setParticipants(deriveParticipants(items as Item[], r));
             }
 
             // Wait for OBR to be fully ready for listener callbacks
@@ -121,6 +126,7 @@ export function App() {
                 OBR.player.onChange((player) => {
                   try {
                     setRole(player.role);
+                    roleRef.current = player.role;
                     setSelection(player.selection ?? []);
                   } catch (e) {
                     console.warn("Error in player onChange:", e);
@@ -149,7 +155,7 @@ export function App() {
               unsubscribers.push(
                 OBR.scene.items.onChange((items) => {
                   try {
-                    const derived = deriveParticipants(items as Item[]);
+                    const derived = deriveParticipants(items as Item[], roleRef.current);
                     setParticipants(derived);
                   } catch (e) {
                     console.warn("Error in items onChange:", e);
@@ -187,6 +193,36 @@ export function App() {
               );
             } catch (e) {
               console.warn("Failed to register party onChange:", e);
+            }
+
+            // 4. Set up context menu for adding tokens to initiative
+            try {
+              OBR.contextMenu.create({
+                id: "com.rumble.initiative/add-to-initiative",
+                icons: [
+                  {
+                    icon: "",
+                    label: "Add to Rumble Initiative",
+                    filter: {
+                      every: [
+                        { key: "type", value: "IMAGE" },
+                        {
+                          key: [ITEM_META_KEY, "excluded"],
+                          value: true,
+                        },
+                      ],
+                      permissions: ["UPDATE"],
+                    },
+                  },
+                ],
+                onClick: async (context) => {
+                  for (const item of context.items) {
+                    await addTokenToInitiative(item.id);
+                  }
+                },
+              });
+            } catch (e) {
+              console.warn("Failed to register context menu:", e);
             }
 
             // Mark initialization as complete
@@ -227,7 +263,25 @@ export function App() {
       initiative: Number.isFinite(value.initiative) ? Number(value.initiative) : 0,
       ownerId: typeof value.ownerId === "string" ? value.ownerId : item.createdUserId,
       delay: Number.isFinite(value.delay) ? Number(value.delay) : 0,
+      excluded: Boolean(value.excluded),
     };
+  };
+
+  const initializeItemInitiative = async (item: Item) => {
+    const meta = readItemInitiative(item);
+    if (!meta) {
+      // Token doesn't have initiative metadata, set it to 0
+      await OBR.scene.items.updateItems([item.id], (items) => {
+        if (items.length > 0) {
+          const itemMeta = items[0].metadata as Record<string, unknown>;
+          itemMeta[ITEM_META_KEY] = {
+            initiative: 0,
+            ownerId: item.createdUserId,
+            delay: 0,
+          };
+        }
+      });
+    }
   };
 
   const sortParticipants = (list: Participant[]): Participant[] => {
@@ -239,11 +293,31 @@ export function App() {
     });
   };
 
-  const deriveParticipants = (items: Item[]): Participant[] => {
+  const deriveParticipants = (items: Item[], playerRole: "GM" | "PLAYER" = "PLAYER"): Participant[] => {
     const out: Participant[] = [];
     for (const item of items) {
-      const meta = readItemInitiative(item);
-      if (!meta) continue;
+      // Hide items from non-GM players if they're hidden in the scene
+      if (playerRole !== "GM" && !item.visible) {
+        continue;
+      }
+
+      let meta = readItemInitiative(item);
+      if (!meta) {
+        // Auto-initialize items without metadata
+        meta = {
+          initiative: 0,
+          ownerId: item.createdUserId,
+          delay: 0,
+        };
+        // Trigger the initialization in the background
+        void initializeItemInitiative(item);
+      }
+
+      // Skip if explicitly excluded by GM
+      if (meta.excluded) {
+        continue;
+      }
+
       out.push({
         tokenId: item.id,
         name: typeof item.name === "string" && item.name ? item.name : "Token",
@@ -297,6 +371,49 @@ export function App() {
         const current = meta[ITEM_META_KEY] as Partial<ItemInitiativeMeta> | undefined;
         if (current) {
           meta[ITEM_META_KEY] = { ...current, delay: Math.max(0, delay) };
+        }
+      }
+    });
+  };
+
+  const updateTokenInitiative = async (tokenId: string, initiative: number) => {
+    await OBR.scene.items.updateItems([tokenId], (items) => {
+      for (const item of items) {
+        const meta = item.metadata as Record<string, unknown>;
+        const current = meta[ITEM_META_KEY] as Partial<ItemInitiativeMeta> | undefined;
+        if (current) {
+          meta[ITEM_META_KEY] = { ...current, initiative: Math.max(0, initiative) };
+        }
+      }
+    });
+  };
+
+  const removeTokenFromInitiative = async (tokenId: string) => {
+    await OBR.scene.items.updateItems([tokenId], (items) => {
+      for (const item of items) {
+        const meta = item.metadata as Record<string, unknown>;
+        const current = meta[ITEM_META_KEY] as Partial<ItemInitiativeMeta> | undefined;
+        if (current) {
+          meta[ITEM_META_KEY] = { ...current, excluded: true };
+        }
+      }
+    });
+  };
+
+  const addTokenToInitiative = async (tokenId: string) => {
+    await OBR.scene.items.updateItems([tokenId], (items) => {
+      for (const item of items) {
+        const meta = item.metadata as Record<string, unknown>;
+        const current = meta[ITEM_META_KEY] as Partial<ItemInitiativeMeta> | undefined;
+        if (current) {
+          meta[ITEM_META_KEY] = { ...current, excluded: false };
+        } else {
+          meta[ITEM_META_KEY] = {
+            initiative: 0,
+            ownerId: item.createdUserId,
+            delay: 0,
+            excluded: false,
+          };
         }
       }
     });
@@ -417,16 +534,35 @@ export function App() {
   return (
     <main className="layout">
       <section className="header-section">
-        <h1>Rumble Initiative Tracker</h1>
-        <div className="header-info">
-          <span>
-            Round {coreState.roundNumber} | Rumble {coreState.rumbleNumber}/3 | {coreState.phase}
-          </span>
-          <div className="stats">
-            <span className="stat-item">
-              Ready: {ready}/{participants.length}
+        <div className="header-top">
+          <div className="header-status">
+            <span className="status-text">
+              Round {coreState.roundNumber} | Rumble {coreState.rumbleNumber}/3 | {coreState.phase} | Ready: {ready}/{participants.length}
             </span>
           </div>
+          {role === "GM" && (
+            <div className="header-controls">
+              <button onClick={() => revealNow()} title="Reveal all declarations">Reveal</button>
+              <button onClick={() => mutateCoreState((s) => ({ ...s, phase: "resolve" }))} title="Move to next phase">Next Phase</button>
+              <button
+                onClick={() =>
+                  mutateCoreState((s) => {
+                    clearAllDeclarations();
+                    return {
+                      ...s,
+                      phase: "plan",
+                      rumbleNumber: (s.rumbleNumber === 3 ? 1 : s.rumbleNumber + 1) as 1 | 2 | 3,
+                      roundNumber: s.rumbleNumber === 3 ? s.roundNumber + 1 : s.roundNumber,
+                    };
+                  })
+                }
+                title="Move to next rumble"
+              >
+                Next Rumble
+              </button>
+              <button onClick={() => mutateCoreState(() => getDefaultCore())} title="Reset all">Reset</button>
+            </div>
+          )}
         </div>
       </section>
 
@@ -505,6 +641,39 @@ export function App() {
               Queue Next Rumble
             </button>
           )}
+
+          {target && declarations[target.tokenId]?.queue && declarations[target.tokenId].queue!.length > 0 && (
+            <div className="queue-display">
+              <h3>Queued Actions ({declarations[target.tokenId].queue!.length}/3)</h3>
+              <ul className="queue-list">
+                {declarations[target.tokenId].queue!.map((qAction, idx) => (
+                  <li key={idx} className="queue-item">
+                    <div className="queue-action">
+                      {qAction.category && <span className="queue-category">[{qAction.category}]</span>}
+                      <span className="queue-text">{qAction.text}</span>
+                    </div>
+                    <button
+                      className="remove-queue"
+                      onClick={async () => {
+                        const existing = declarations[target.tokenId];
+                        if (existing?.queue) {
+                          const newQueue = existing.queue.filter((_, i) => i !== idx);
+                          const next: Declaration = {
+                            ...existing,
+                            queue: newQueue.length > 0 ? newQueue : undefined,
+                          };
+                          await setDeclaration(target.tokenId, next);
+                        }
+                      }}
+                      title="Remove this queued action"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
       )}
 
@@ -580,6 +749,8 @@ export function App() {
               const action = actionDisplay(p);
               const isSelected = p.tokenId === selection[0];
               const displayInitiative = p.delay ? `${p.initiative - p.delay}` : `${p.initiative}`;
+              const isEditing = editingInitiativeId === p.tokenId;
+
               return (
                 <li
                   key={p.tokenId}
@@ -587,39 +758,59 @@ export function App() {
                   onClick={() => OBR.player.select([p.tokenId])}
                 >
                   <span className="name">{p.name}</span>
-                  <span className="init">{displayInitiative}</span>
+                  {isEditing ? (
+                    <input
+                      type="number"
+                      className="init-input"
+                      value={editingInitiativeValue}
+                      onChange={(e) => setEditingInitiativeValue(e.target.value)}
+                      onBlur={async () => {
+                        const newInit = Math.max(0, parseInt(editingInitiativeValue) || 0);
+                        await updateTokenInitiative(p.tokenId, newInit);
+                        setEditingInitiativeId(null);
+                        setEditingInitiativeValue("");
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          (e.target as HTMLInputElement).blur();
+                        }
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      autoFocus
+                      min="0"
+                    />
+                  ) : (
+                    <span
+                      className="init"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingInitiativeId(p.tokenId);
+                        setEditingInitiativeValue(String(p.initiative));
+                      }}
+                      title="Click to edit initiative"
+                    >
+                      {displayInitiative}
+                    </span>
+                  )}
                   {action && <span className="action">{action}</span>}
+                  {role === "GM" && (
+                    <button
+                      className="remove-token"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void removeTokenFromInitiative(p.tokenId);
+                      }}
+                      title="Remove from initiative"
+                    >
+                      ✕
+                    </button>
+                  )}
                 </li>
               );
             })}
           </ul>
         )}
       </section>
-
-      {role === "GM" && (
-        <section className="controls-section">
-          <button onClick={() => revealNow()}>Reveal Now</button>
-          <button onClick={() => mutateCoreState((s) => ({ ...s, phase: "resolve" }))}>
-            Next Phase
-          </button>
-          <button
-            onClick={() =>
-              mutateCoreState((s) => {
-                clearAllDeclarations();
-                return {
-                  ...s,
-                  phase: "plan",
-                  rumbleNumber: (s.rumbleNumber === 3 ? 1 : s.rumbleNumber + 1) as 1 | 2 | 3,
-                  roundNumber: s.rumbleNumber === 3 ? s.roundNumber + 1 : s.roundNumber,
-                };
-              })
-            }
-          >
-            Next Rumble
-          </button>
-          <button onClick={() => mutateCoreState(() => getDefaultCore())}>Reset</button>
-        </section>
-      )}
     </main>
   );
 }
