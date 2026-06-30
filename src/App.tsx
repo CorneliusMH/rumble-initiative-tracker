@@ -37,13 +37,22 @@ export function App() {
   const [bulkActionCategory, setBulkActionCategory] = useState("");
   const [bulkSelection, setBulkSelection] = useState<string[]>([]);
   const [theme, setTheme] = useState<{ mode: string; text: { primary: string }; background: { default: string }; primary: { main: string } } | null>(null);
+  const [obrReady, setObrReady] = useState(false);
 
   // Initialize theme
   useEffect(() => {
-    OBR.theme.getTheme().then((t) => {
-      setTheme(t as any);
-      applyThemeToDOM(t as any);
-    });
+    const setupTheme = async () => {
+      try {
+        const t = await OBR.theme.getTheme();
+        setTheme(t as any);
+        applyThemeToDOM(t as any);
+      } catch (e) {
+        console.warn("Failed to initialize theme:", e);
+      }
+    };
+    
+    setupTheme();
+    
     const unsubscribe = OBR.theme.onChange((t) => {
       setTheme(t as any);
       applyThemeToDOM(t as any);
@@ -67,79 +76,86 @@ export function App() {
     root.style.setProperty("--color-action", mode === "light" ? "#1976d2" : "#89b4fa");
   };
 
-  // Initialize and subscribe to events
+  // Initialize OBR and subscribe to events
   useEffect(() => {
     const setup = async () => {
-      await OBR.onReady(async () => {
-        const [r, pid, pname, sceneIsReady, sel] = await Promise.all([
-          OBR.player.getRole(),
-          OBR.player.getId(),
-          OBR.player.getName(),
-          OBR.scene.isReady(),
-          OBR.player.getSelection(),
-        ]);
-        setRole(r);
-        setPlayerId(pid);
-        setPlayerName(pname);
-        setSceneReady(sceneIsReady);
-        setSelection(sel ?? []);
+      try {
+        await OBR.onReady(async () => {
+          const [r, pid, pname, sceneIsReady, sel] = await Promise.all([
+            OBR.player.getRole(),
+            OBR.player.getId(),
+            OBR.player.getName(),
+            OBR.scene.isReady(),
+            OBR.player.getSelection(),
+          ]);
+          setRole(r);
+          setPlayerId(pid);
+          setPlayerName(pname);
+          setSceneReady(sceneIsReady);
+          setSelection(sel ?? []);
 
-        // Subscribe to changes
-        OBR.player.onChange((player) => {
-          setRole(player.role);
-          setSelection(player.selection ?? []);
-        });
-
-        OBR.scene.onReadyChange(setSceneReady);
-
-        OBR.scene.items.onChange((items) => {
-          const derived = deriveParticipants(items as Item[]);
-          setParticipants(derived);
-        });
-
-        onMetadataChange((metadata) => {
-          setCoreState(sanitizeCore(metadata[CORE_KEY]));
-          setDeclarations(readDeclarations(metadata));
-        });
-
-        // Load initial data
-        const [initialMetadata, initialItems, allPlayers] = await Promise.all([
-          OBR.room.getMetadata(),
-          OBR.scene.items.getItems(),
-          (async () => {
-            try {
-              // Try to get players from the scene or room
-              const items = await OBR.scene.items.getItems();
-              const playerMap = new Map<string, Player>();
-              for (const item of items) {
-                if (item.createdUserId && !playerMap.has(item.createdUserId)) {
-                  // Try to get player info - this may not work, so we'll handle it
-                  playerMap.set(item.createdUserId, {
-                    id: item.createdUserId,
-                    name: "Player",
-                    role: "PLAYER",
-                    color: "#000000",
-                  } as Player);
-                }
-              }
-              return Array.from(playerMap.values());
-            } catch {
-              return [];
-            }
-          })(),
-        ]);
-
-        setCoreState(sanitizeCore(initialMetadata[CORE_KEY]));
-        setDeclarations(readDeclarations(initialMetadata));
-        setParticipants(deriveParticipants(initialItems as Item[]));
-        setPlayers(allPlayers);
-
-        if (sceneIsReady) {
-          await OBR.scene.items.getItems().then((items) => {
-            setParticipants(deriveParticipants(items as Item[]));
+          // Subscribe to changes
+          OBR.player.onChange((player) => {
+            setRole(player.role);
+            setSelection(player.selection ?? []);
           });
-        }
-      });
+
+          OBR.scene.onReadyChange(setSceneReady);
+
+          OBR.scene.items.onChange((items) => {
+            const derived = deriveParticipants(items as Item[]);
+            setParticipants(derived);
+          });
+
+          onMetadataChange((metadata) => {
+            setCoreState(sanitizeCore(metadata[CORE_KEY]));
+            setDeclarations(readDeclarations(metadata));
+          });
+
+          // Load initial data
+          const [initialMetadata, initialItems, allPlayers] = await Promise.all([
+            OBR.room.getMetadata(),
+            OBR.scene.items.getItems(),
+            (async () => {
+              try {
+                // Try to get players from the scene or room
+                const items = await OBR.scene.items.getItems();
+                const playerMap = new Map<string, Player>();
+                for (const item of items) {
+                  if (item.createdUserId && !playerMap.has(item.createdUserId)) {
+                    // Try to get player info - this may not work, so we'll handle it
+                    playerMap.set(item.createdUserId, {
+                      id: item.createdUserId,
+                      name: "Player",
+                      role: "PLAYER",
+                      color: "#000000",
+                    } as Player);
+                  }
+                }
+                return Array.from(playerMap.values());
+              } catch {
+                return [];
+              }
+            })(),
+          ]);
+
+          setCoreState(sanitizeCore(initialMetadata[CORE_KEY]));
+          setDeclarations(readDeclarations(initialMetadata));
+          setParticipants(deriveParticipants(initialItems as Item[]));
+          setPlayers(allPlayers);
+
+          if (sceneIsReady) {
+            await OBR.scene.items.getItems().then((items) => {
+              setParticipants(deriveParticipants(items as Item[]));
+            });
+          }
+          
+          setObrReady(true);
+        });
+      } catch (e) {
+        console.error("OBR initialization failed:", e);
+        setObrReady(true); // Set true even on error so UI shows
+      }
     };
 
     setup();
@@ -312,6 +328,17 @@ export function App() {
       if (!decl.revealed) await setDeclaration(tokenId, { ...decl, revealed: true });
     }
   };
+
+  if (!obrReady) {
+    return (
+      <main className="layout">
+        <section className="header-section">
+          <h1>Rumble Initiative Tracker</h1>
+          <p className="muted">Initializing...</p>
+        </section>
+      </main>
+    );
+  }
 
   if (!sceneReady) {
     return (
