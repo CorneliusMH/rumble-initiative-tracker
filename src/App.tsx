@@ -36,6 +36,36 @@ export function App() {
   const [bulkActionText, setBulkActionText] = useState("");
   const [bulkActionCategory, setBulkActionCategory] = useState("");
   const [bulkSelection, setBulkSelection] = useState<string[]>([]);
+  const [theme, setTheme] = useState<{ mode: string; text: { primary: string }; background: { default: string }; primary: { main: string } } | null>(null);
+
+  // Initialize theme
+  useEffect(() => {
+    OBR.theme.getTheme().then((t) => {
+      setTheme(t as any);
+      applyThemeToDOM(t as any);
+    });
+    const unsubscribe = OBR.theme.onChange((t) => {
+      setTheme(t as any);
+      applyThemeToDOM(t as any);
+    });
+    return unsubscribe;
+  }, []);
+
+  const applyThemeToDOM = (t: any) => {
+    const root = document.documentElement;
+    const mode = t?.mode === "LIGHT" ? "light" : "dark";
+    const bgColor = t?.background?.default || (mode === "light" ? "#ffffff" : "#2a2a2a");
+    const textColor = t?.text?.primary || (mode === "light" ? "#000000" : "#ffffff");
+    const primaryColor = t?.primary?.main || (mode === "light" ? "#1976d2" : "#0d47a1");
+    
+    root.style.setProperty("--theme-mode", mode);
+    root.style.setProperty("--bg-primary", bgColor);
+    root.style.setProperty("--bg-secondary", mode === "light" ? "#f5f5f5" : "#333333");
+    root.style.setProperty("--text-primary", textColor);
+    root.style.setProperty("--text-secondary", mode === "light" ? "#666666" : "#aaaaaa");
+    root.style.setProperty("--color-primary", primaryColor);
+    root.style.setProperty("--color-action", mode === "light" ? "#1976d2" : "#89b4fa");
+  };
 
   // Initialize and subscribe to events
   useEffect(() => {
@@ -338,9 +368,18 @@ export function App() {
             </div>
           )}
 
-          {role === "GM" && target.delay !== undefined && (
-            <div className="delay-info">
-              <label>
+          <div className="action-row">
+            <label className="action-input">
+              Action
+              <input
+                type="text"
+                placeholder={`What does ${target.name} do?`}
+                value={draftAction}
+                onChange={(e) => setDraftAction(e.target.value)}
+              />
+            </label>
+            {target.delay !== undefined && (
+              <label className="delay-input">
                 Delay (max {target.initiative - 1})
                 <input
                   type="number"
@@ -350,18 +389,8 @@ export function App() {
                   onChange={(e) => updateTokenDelay(target.tokenId, parseInt(e.target.value) || 0)}
                 />
               </label>
-            </div>
-          )}
-
-          <label>
-            Action
-            <input
-              type="text"
-              placeholder={`What does ${target.name} do?`}
-              value={draftAction}
-              onChange={(e) => setDraftAction(e.target.value)}
-            />
-          </label>
+            )}
+          </div>
 
           <label>
             Category
@@ -405,26 +434,24 @@ export function App() {
       {role === "GM" && (
         <section className="bulk-actions-section">
           <h2>Bulk Action (GM)</h2>
-          <div style={{ marginBottom: "8px" }}>
-            <label>Select tokens to apply action to:</label>
-            <div style={{ display: "grid", gap: "4px", maxHeight: "120px", overflow: "auto" }}>
-              {participants.map((p) => (
-                <label key={p.tokenId} style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                  <input
-                    type="checkbox"
-                    checked={bulkSelection.includes(p.tokenId)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setBulkSelection([...bulkSelection, p.tokenId]);
-                      } else {
-                        setBulkSelection(bulkSelection.filter((id) => id !== p.tokenId));
-                      }
-                    }}
-                  />
-                  {p.name}
-                </label>
-              ))}
-            </div>
+          <div className="bulk-token-list">
+            <label className="bulk-label">Select tokens:</label>
+            {participants.map((p) => (
+              <label key={p.tokenId} className="bulk-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={bulkSelection.includes(p.tokenId)}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setBulkSelection([...bulkSelection, p.tokenId]);
+                    } else {
+                      setBulkSelection(bulkSelection.filter((id) => id !== p.tokenId));
+                    }
+                  }}
+                />
+                <span>{p.name}</span>
+              </label>
+            ))}
           </div>
 
           <label>
