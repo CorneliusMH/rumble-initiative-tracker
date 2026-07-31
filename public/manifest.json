@@ -1,9 +1,9 @@
 {
   "name": "Rumble Initiative Tracker",
-  "version": "0.6.8",
+  "version": "0.6.9",
   "manifest_version": 1,
   "author": "Cornelius",
-  "description": "Token-based three-rumble initiative tracker with declare/reveal phases.",
+  "description": "Three-rumble initiative tracker with private declare, all-ready auto-reveal, per-rumble queueing, and player auto-enrollment.",
   "icon": "/icon.svg",
   "action": {
     "title": "Rumble Initiative",
@@ -12,10 +12,5 @@
     "height": 720,
     "width": 500
   },
-  "permissions": [
-    {
-      "name": "clipboard-write",
-      "reason": "Allow exporting the combat log to the clipboard."
-    }
-  ]
+  "permissions": []
 }

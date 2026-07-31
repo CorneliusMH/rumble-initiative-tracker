@@ -1,5 +1,5 @@
 import OBR from "@owlbear-rodeo/sdk";
-import type { CoreState, Declaration, Phase, QueuedAction } from "./types";
+import type { CoreState, Declaration, QueuedAction } from "./types";
 
 export const NAMESPACE = "com.rumble.initiative";
 export const CORE_KEY = `${NAMESPACE}/core`;
@@ -9,15 +9,12 @@ export const PLAYER_PARTICIPANT_PREFIX = "player:";
 export const ITEM_META_KEY = `${NAMESPACE}/initiative`;
 const HISTORY_KEY = `${NAMESPACE}/quick-history`;
 
-const MAX_LOG_ENTRIES = 60;
-const MAX_LOG_TEXT = 200;
 const MAX_DECL_TEXT = 240;
 
 const DEFAULT_CORE: CoreState = {
   roundNumber: 1,
   rumbleNumber: 1,
-  phase: "plan",
-  log: []
+  phase: "plan"
 };
 
 export function getDefaultCore(): CoreState {
@@ -35,29 +32,7 @@ export function sanitizeCore(input: unknown): CoreState {
       state.rumbleNumber === 1 || state.rumbleNumber === 2 || state.rumbleNumber === 3
         ? state.rumbleNumber
         : 1,
-    phase: rawPhase === "resolve" || rawPhase === "reveal" ? "resolve" : "plan",
-    log: Array.isArray(state.log)
-      ? state.log
-          .filter((entry) => entry && typeof entry === "object")
-          .map((entry) => {
-            const rawEntryPhase = entry.phase as string | undefined;
-            const phase: Phase =
-              rawEntryPhase === "resolve" || rawEntryPhase === "reveal" ? "resolve" : "plan";
-            return {
-              timestamp: Number.isFinite(entry.timestamp) ? Number(entry.timestamp) : Date.now(),
-              rumbleNumber:
-                entry.rumbleNumber === 1 || entry.rumbleNumber === 2 || entry.rumbleNumber === 3
-                  ? entry.rumbleNumber
-                  : 1,
-              roundNumber: Number.isFinite(entry.roundNumber) ? Math.max(1, Number(entry.roundNumber)) : 1,
-              phase,
-              tokenId: typeof entry.tokenId === "string" ? entry.tokenId : "",
-              tokenName: typeof entry.tokenName === "string" ? entry.tokenName : "Unknown",
-              text: typeof entry.text === "string" ? entry.text.slice(0, MAX_LOG_TEXT) : ""
-            };
-          })
-          .slice(-MAX_LOG_ENTRIES)
-      : []
+    phase: rawPhase === "resolve" || rawPhase === "reveal" ? "resolve" : "plan"
   };
 }
 

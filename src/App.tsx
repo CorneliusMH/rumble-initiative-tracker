@@ -5,7 +5,6 @@ import {
   ITEM_META_KEY,
   PLAYER_PARTICIPANT_PREFIX,
   advanceDeclarationsToNextRumble,
-  clearAllDeclarations,
   getDefaultCore,
   getQuickHistory,
   mutateCoreState,
@@ -17,7 +16,7 @@ import {
   setDeclaration,
   setPlayerInit,
 } from "./state";
-import type { CoreState, Declaration, Participant, Phase, QueuedAction } from "./types";
+import type { CoreState, Declaration, Participant, QueuedAction } from "./types";
 import type { PlayerInitiativeData, QuickHistoryEntry } from "./state";
 
 interface ItemInitiativeMeta {
@@ -25,6 +24,11 @@ interface ItemInitiativeMeta {
   ownerId?: string;
   delay?: number;
   excluded?: boolean;
+}
+
+interface LogEntry {
+  timestamp: number;
+  text: string;
 }
 
 export function App() {
@@ -43,7 +47,6 @@ export function App() {
   const [bulkActionText, setBulkActionText] = useState("");
   const [bulkSelection, setBulkSelection] = useState<string[]>([]);
   const [history, setHistory] = useState<QuickHistoryEntry[]>([]);
-  const [theme, setTheme] = useState<{ mode: string; text: { primary: string }; background: { default: string }; primary: { main: string } } | null>(null);
   const [obrReady, setObrReady] = useState(false);
   const [editingInitiativeId, setEditingInitiativeId] = useState<string | null>(null);
   const [editingInitiativeValue, setEditingInitiativeValue] = useState("");
@@ -51,6 +54,13 @@ export function App() {
   const [editingQueueValue, setEditingQueueValue] = useState("");
   const roleRef = React.useRef<"GM" | "PLAYER">("PLAYER");
   const initializingRef = React.useRef(true);
+
+  // GM-only combat log (kept locally on this client; exported as a .txt file).
+  const logRef = React.useRef<LogEntry[]>([]);
+  const coreSnapshotRef = React.useRef<CoreState | null>(null);
+  const declSnapshotRef = React.useRef<Record<string, Declaration> | null>(null);
+  const participantsRef = React.useRef<Participant[]>([]);
+  const playersRef = React.useRef<Player[]>([]);
 
   // Initialize theme - REMOVED, will be done inside OBR.onReady
   // useEffect(() => { ... })
@@ -80,11 +90,9 @@ export function App() {
             // 0. Initialize theme first
             try {
               const t = await OBR.theme.getTheme();
-              setTheme(t as any);
               applyThemeToDOM(t as any);
-              
+
               OBR.theme.onChange((newTheme) => {
-                setTheme(newTheme as any);
                 applyThemeToDOM(newTheme as any);
               });
             } catch (e) {
@@ -407,6 +415,49 @@ export function App() {
     [tokenParticipants, players, playerId, playerName, role, playerInits]
   );
 
+  // Kept in refs so log-writing effects can resolve display names without
+  // re-running on every unrelated render.
+  participantsRef.current = participants;
+  playersRef.current = players;
+
+  const resolveParticipantName = React.useCallback((participantId: string): string => {
+    const p = participantsRef.current.find((x) => x.tokenId === participantId);
+    if (p) return p.name;
+    if (participantId.startsWith(PLAYER_PARTICIPANT_PREFIX)) {
+      const pid = participantId.slice(PLAYER_PARTICIPANT_PREFIX.length);
+      const pl = playersRef.current.find((x) => x.id === pid);
+      if (pl) return pl.name;
+    }
+    return "Unknown";
+  }, []);
+
+  const formatLogTimestamp = (ts: number) => {
+    const d = new Date(ts);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  };
+
+  const appendLog = React.useCallback((text: string) => {
+    logRef.current.push({ timestamp: Date.now(), text });
+  }, []);
+
+  const downloadCombatLog = () => {
+    const lines = logRef.current.length
+      ? logRef.current.map((e) => `[${formatLogTimestamp(e.timestamp)}] ${e.text}`)
+      : ["(no events recorded yet in this session)"];
+    const body = lines.join("\n") + "\n";
+    const stamp = formatLogTimestamp(Date.now()).replace(/[: ]/g, "-");
+    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rumble-log-${stamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const selectedParticipant = (): Participant | null => {
     // Non-GM players always act as themselves; scene selection is irrelevant.
     if (role !== "GM") {
@@ -441,19 +492,6 @@ export function App() {
     }
 
     return decl.text;
-  };
-
-  const updateTokenOwner = async (tokenId: string, newOwnerId: string) => {
-    if (!newOwnerId.trim()) return;
-    await OBR.scene.items.updateItems([tokenId], (items) => {
-      for (const item of items) {
-        const meta = item.metadata as Record<string, unknown>;
-        const current = meta[ITEM_META_KEY] as Partial<ItemInitiativeMeta> | undefined;
-        if (current) {
-          meta[ITEM_META_KEY] = { ...current, ownerId: newOwnerId.trim() };
-        }
-      }
-    });
   };
 
   const updateTokenDelay = async (tokenId: string, delay: number) => {
@@ -666,6 +704,100 @@ export function App() {
     }
   };
 
+  // Auto-advance to resolve when everyone is ready. GM-only to avoid race
+  // conditions from multiple clients racing to flip the phase.
+  const autoAdvancedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (coreState.phase !== "plan") {
+      autoAdvancedRef.current = false;
+      return;
+    }
+    if (role !== "GM") return;
+    if (participants.length === 0) return;
+    const allReady = participants.every((p) => declarations[p.tokenId]?.ready);
+    if (allReady && !autoAdvancedRef.current) {
+      autoAdvancedRef.current = true;
+      void advanceToResolve();
+    }
+  }, [participants, declarations, coreState.phase, role]);
+
+  // Combat log: initialize snapshots once, then diff coreState and declarations
+  // on every change and append entries. GM-only.
+  React.useEffect(() => {
+    if (role !== "GM" || !obrReady) return;
+    if (coreSnapshotRef.current === null) {
+      coreSnapshotRef.current = coreState;
+      declSnapshotRef.current = declarations;
+      appendLog(
+        `Session opened at Rumble ${coreState.roundNumber}.${coreState.rumbleNumber} (phase: ${coreState.phase})`
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obrReady, role]);
+
+  React.useEffect(() => {
+    if (role !== "GM" || !obrReady) return;
+    const prev = coreSnapshotRef.current;
+    if (!prev) return;
+    const cur = coreState;
+    if (
+      prev.roundNumber === cur.roundNumber &&
+      prev.rumbleNumber === cur.rumbleNumber &&
+      prev.phase === cur.phase
+    ) {
+      return;
+    }
+    const bookend =
+      cur.rumbleNumber === 1
+        ? " — beginning of round"
+        : cur.rumbleNumber === 3
+          ? " — end of round"
+          : "";
+    if (prev.rumbleNumber !== cur.rumbleNumber || prev.roundNumber !== cur.roundNumber) {
+      appendLog(
+        `Rumble ${cur.roundNumber}.${cur.rumbleNumber} begins (phase: ${cur.phase})${bookend}`
+      );
+    } else if (prev.phase !== cur.phase) {
+      appendLog(`Rumble ${cur.roundNumber}.${cur.rumbleNumber} → phase ${cur.phase}`);
+    }
+    coreSnapshotRef.current = cur;
+  }, [coreState, obrReady, role, appendLog]);
+
+  React.useEffect(() => {
+    if (role !== "GM" || !obrReady) return;
+    const prev = declSnapshotRef.current;
+    if (!prev) return;
+    const cur = declarations;
+    const rumbleTag = `Rumble ${coreState.roundNumber}.${coreState.rumbleNumber}`;
+    for (const [participantId, decl] of Object.entries(cur)) {
+      if (!decl.ready) continue;
+      const before = prev[participantId];
+      const wasReady = !!before?.ready;
+      const sameText = before?.text === decl.text;
+      if (wasReady && sameText) continue;
+      const promotedFromQueue = !!(
+        before?.queue &&
+        before.queue.length > 0 &&
+        before.queue[0].text === decl.text
+      );
+      const name = resolveParticipantName(participantId);
+      let action: string;
+      if (promotedFromQueue) action = "queued action activates";
+      else if (wasReady) action = "updates action";
+      else action = "submits action";
+      appendLog(`[${rumbleTag}] ${name} ${action}: "${decl.text}"`);
+    }
+    declSnapshotRef.current = cur;
+  }, [
+    declarations,
+    obrReady,
+    role,
+    coreState.roundNumber,
+    coreState.rumbleNumber,
+    appendLog,
+    resolveParticipantName,
+  ]);
+
   if (!obrReady) {
     return (
       <main className="layout">
@@ -698,7 +830,14 @@ export function App() {
       <section className="header-section">
         <div className="header-top">
           <span className="status-text">
-            Rumble {coreState.roundNumber}.{coreState.rumbleNumber} | {coreState.phase} | Ready: {ready}/{participants.length}
+            Rumble {coreState.roundNumber}.{coreState.rumbleNumber}
+            {coreState.rumbleNumber === 1 && (
+              <span className="round-marker"> (round start)</span>
+            )}
+            {coreState.rumbleNumber === 3 && (
+              <span className="round-marker"> (round end)</span>
+            )}
+            {" | "}{coreState.phase} | Ready: {ready}/{participants.length}
           </span>
           {role === "GM" && (
             <div className="header-controls">
@@ -733,10 +872,18 @@ export function App() {
               <button
                 className="icon-button"
                 onClick={() => mutateCoreState(() => getDefaultCore())}
-                title="Reset all"
-                aria-label="Reset"
+                title="Reset to Rumble 1.1"
+                aria-label="Reset to Rumble 1.1"
               >
                 <span aria-hidden="true">🔄</span>
+              </button>
+              <button
+                className="icon-button"
+                onClick={downloadCombatLog}
+                title="Export combat log as .txt"
+                aria-label="Export combat log"
+              >
+                <span aria-hidden="true">💾</span>
               </button>
             </div>
           )}

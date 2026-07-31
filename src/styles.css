@@ -443,6 +443,12 @@ button:disabled {
   flex: 1 1 auto;
 }
 
+.round-marker {
+  color: var(--color-action);
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
 .header-controls {
   display: flex;
   flex-direction: row;

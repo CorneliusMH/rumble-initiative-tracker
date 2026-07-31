@@ -27,19 +27,8 @@ export interface Declaration {
   queue?: QueuedAction[];
 }
 
-export interface CombatLogEntry {
-  timestamp: number;
-  rumbleNumber: number;
-  roundNumber: number;
-  phase: Phase;
-  tokenId: string;
-  tokenName: string;
-  text: string;
-}
-
 export interface CoreState {
   roundNumber: number;
   rumbleNumber: 1 | 2 | 3;
   phase: Phase;
-  log: CombatLogEntry[];
 }
