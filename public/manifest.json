@@ -3,7 +3,7 @@
   "version": "0.7.2",
   "manifest_version": 1,
   "author": "Cornelius",
-  "description": "Three-rumble initiative tracker with private declare, all-ready auto-reveal, per-rumble queueing, and player auto-enrollment.",
+  "description": "Initiative tracker with 3 actions per round. Each one has a plan and resolve phase. Automatically advances to resolve phase when all participants are ready. Participants are all non-GM players and any tokens added to initiative by the GM.",
   "icon": "/icon.svg",
   "action": {
     "title": "Rumble Initiative",
