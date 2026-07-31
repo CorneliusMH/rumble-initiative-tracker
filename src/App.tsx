@@ -220,49 +220,51 @@ export function App() {
               }
             }
 
-            // 4. Set up context menu for adding/removing tokens to initiative
-            try {
-              OBR.contextMenu.create({
-                id: "com.rumble.initiative/toggle",
-                icons: [
-                  {
-                    icon: "",
-                    label: "Add to Rumble Initiative",
-                    filter: {
-                      every: [
-                        { key: "type", value: "IMAGE" },
-                        { key: ["metadata", ITEM_META_KEY], value: undefined },
-                      ],
-                      permissions: ["UPDATE"],
+            // 4. Set up context menu for adding/removing tokens to initiative (GM only)
+            if (r === "GM") {
+              try {
+                OBR.contextMenu.create({
+                  id: "com.rumble.initiative/toggle",
+                  icons: [
+                    {
+                      icon: "",
+                      label: "Add to Rumble Initiative",
+                      filter: {
+                        every: [
+                          { key: "type", value: "IMAGE" },
+                          { key: ["metadata", ITEM_META_KEY], value: undefined },
+                        ],
+                        permissions: ["UPDATE"],
+                      },
                     },
-                  },
-                  {
-                    icon: "",
-                    label: "Remove from Rumble Initiative",
-                    filter: {
-                      every: [
-                        { key: "type", value: "IMAGE" },
-                      ],
-                      permissions: ["UPDATE"],
+                    {
+                      icon: "",
+                      label: "Remove from Rumble Initiative",
+                      filter: {
+                        every: [
+                          { key: "type", value: "IMAGE" },
+                        ],
+                        permissions: ["UPDATE"],
+                      },
                     },
-                  },
-                ],
-                onClick: async (context) => {
-                  // If every selected item is missing our metadata, add; otherwise remove.
-                  const shouldAdd = context.items.every(
-                    (item) => (item.metadata as Record<string, unknown>)[ITEM_META_KEY] === undefined
-                  );
-                  for (const item of context.items) {
-                    if (shouldAdd) {
-                      await addTokenToInitiative(item.id);
-                    } else {
-                      await removeTokenFromInitiative(item.id);
+                  ],
+                  onClick: async (context) => {
+                    // If every selected item is missing our metadata, add; otherwise remove.
+                    const shouldAdd = context.items.every(
+                      (item) => (item.metadata as Record<string, unknown>)[ITEM_META_KEY] === undefined
+                    );
+                    for (const item of context.items) {
+                      if (shouldAdd) {
+                        await addTokenToInitiative(item.id);
+                      } else {
+                        await removeTokenFromInitiative(item.id);
+                      }
                     }
-                  }
-                },
-              });
-            } catch (e) {
-              console.warn("Failed to register context menu:", e);
+                  },
+                });
+              } catch (e) {
+                console.warn("Failed to register context menu:", e);
+              }
             }
 
             // Mark initialization as complete
