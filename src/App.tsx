@@ -707,15 +707,24 @@ export function App() {
   // Auto-advance to resolve when everyone is ready. GM-only to avoid race
   // conditions from multiple clients racing to flip the phase.
   const autoAdvancedRef = React.useRef(false);
+  // Requires observing at least one not-all-ready state during this plan phase
+  // before auto-advance may fire; otherwise a fresh rumble whose queued actions
+  // all promoted with ready:true would flip straight to resolve.
+  const sawNotAllReadyRef = React.useRef(false);
   React.useEffect(() => {
     if (coreState.phase !== "plan") {
       autoAdvancedRef.current = false;
+      sawNotAllReadyRef.current = false;
       return;
     }
     if (role !== "GM") return;
     if (participants.length === 0) return;
     const allReady = participants.every((p) => declarations[p.tokenId]?.ready);
-    if (allReady && !autoAdvancedRef.current) {
+    if (!allReady) {
+      sawNotAllReadyRef.current = true;
+      return;
+    }
+    if (sawNotAllReadyRef.current && !autoAdvancedRef.current) {
       autoAdvancedRef.current = true;
       void advanceToResolve();
     }
