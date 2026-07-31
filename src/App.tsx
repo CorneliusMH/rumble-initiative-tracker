@@ -114,7 +114,10 @@ export function App() {
                   try {
                     setRole(player.role);
                     roleRef.current = player.role;
-                    setSelection(player.selection ?? []);
+                    const newSel = player.selection ?? [];
+                    setSelection(newSel);
+                    // A fresh scene selection overrides any prior popover-row click.
+                    if (newSel.length > 0) setManualSelectionId(null);
                   } catch (e) {
                     console.warn("Error in player onChange:", e);
                   }
@@ -394,12 +397,13 @@ export function App() {
   );
 
   const selectedParticipant = (): Participant | null => {
-    // Prefer scene selection; fall back to a manually clicked participant row (e.g. a player row).
-    if (selection.length > 0) {
-      return participants.find((p) => p.tokenId === selection[0]) ?? null;
-    }
+    // Manual (popover) selection takes priority so a stale scene selection can't
+    // steal focus after a player clicks their own row.
     if (manualSelectionId) {
       return participants.find((p) => p.tokenId === manualSelectionId) ?? null;
+    }
+    if (selection.length > 0) {
+      return participants.find((p) => p.tokenId === selection[0]) ?? null;
     }
     return null;
   };
@@ -576,9 +580,9 @@ export function App() {
     setBulkActionCategory("");
   };
 
-  const revealNow = async () => {
+  const advanceToResolve = async () => {
     await mutateCoreState((state) => {
-      state.phase = "reveal";
+      state.phase = "resolve";
       return state;
     });
     for (const [tokenId, decl] of Object.entries(declarations)) {
@@ -617,15 +621,18 @@ export function App() {
     <main className="layout">
       <section className="header-section">
         <div className="header-top">
-          <div className="header-status">
-            <span className="status-text">
-              Round {coreState.roundNumber} | Rumble {coreState.rumbleNumber}/3 | {coreState.phase} | Ready: {ready}/{participants.length}
-            </span>
-          </div>
+          <span className="status-text">
+            Rumble {coreState.roundNumber}.{coreState.rumbleNumber} | {coreState.phase} | Ready: {ready}/{participants.length}
+          </span>
           {role === "GM" && (
             <div className="header-controls">
-              <button onClick={() => revealNow()} title="Reveal all declarations">Reveal</button>
-              <button onClick={() => mutateCoreState((s) => ({ ...s, phase: "resolve" }))} title="Move to next phase">Next Phase</button>
+              <button
+                onClick={() => advanceToResolve()}
+                disabled={coreState.phase === "resolve"}
+                title="Reveal all declarations and enter resolve phase"
+              >
+                Resolve
+              </button>
               <button
                 onClick={() =>
                   mutateCoreState((s) => {
@@ -759,14 +766,6 @@ export function App() {
         </section>
       )}
 
-      {target && !canEditToken(target) && (
-        <section className="editor-section">
-          <p className="muted">
-            You are not the owner of this token. Owner: <strong>{target.ownerId || "Unknown"}</strong>
-          </p>
-        </section>
-      )}
-
       {role === "GM" && (
         <section className="bulk-actions-section">
           <h2>Bulk Action (GM)</h2>
@@ -845,8 +844,8 @@ export function App() {
                       setManualSelectionId(null);
                       void OBR.player.select([p.tokenId]);
                     } else {
-                      // Player rows can't be selected in the scene; use manual selection.
-                      void OBR.player.select([]);
+                      // Player rows aren't scene items; rely on manualSelectionId
+                      // (which takes priority in selectedParticipant()).
                       setManualSelectionId(p.tokenId);
                     }
                   }}

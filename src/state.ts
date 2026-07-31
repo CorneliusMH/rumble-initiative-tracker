@@ -27,19 +27,22 @@ export function getDefaultCore(): CoreState {
 export function sanitizeCore(input: unknown): CoreState {
   if (!input || typeof input !== "object") return getDefaultCore();
   const state = input as Partial<CoreState>;
+  // Migrate legacy "reveal" phase (dropped in favor of Plan/Resolve only) to "resolve".
+  const rawPhase = state.phase as string | undefined;
   return {
     roundNumber: Number.isFinite(state.roundNumber) ? Math.max(1, Number(state.roundNumber)) : 1,
     rumbleNumber:
       state.rumbleNumber === 1 || state.rumbleNumber === 2 || state.rumbleNumber === 3
         ? state.rumbleNumber
         : 1,
-    phase: state.phase === "reveal" || state.phase === "resolve" ? state.phase : "plan",
+    phase: rawPhase === "resolve" || rawPhase === "reveal" ? "resolve" : "plan",
     log: Array.isArray(state.log)
       ? state.log
           .filter((entry) => entry && typeof entry === "object")
           .map((entry) => {
+            const rawEntryPhase = entry.phase as string | undefined;
             const phase: Phase =
-              entry.phase === "reveal" || entry.phase === "resolve" ? entry.phase : "plan";
+              rawEntryPhase === "resolve" || rawEntryPhase === "reveal" ? "resolve" : "plan";
             return {
               timestamp: Number.isFinite(entry.timestamp) ? Number(entry.timestamp) : Date.now(),
               rumbleNumber:

@@ -1,4 +1,4 @@
-export type Phase = "plan" | "reveal" | "resolve";
+export type Phase = "plan" | "resolve";
 
 export type ParticipantKind = "token" | "player";
 
