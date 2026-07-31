@@ -4,6 +4,7 @@ import {
   CORE_KEY,
   ITEM_META_KEY,
   PLAYER_PARTICIPANT_PREFIX,
+  advanceDeclarationsToNextRumble,
   clearAllDeclarations,
   getDefaultCore,
   getQuickHistory,
@@ -18,8 +19,6 @@ import {
 } from "./state";
 import type { CoreState, Declaration, Participant, Phase } from "./types";
 import type { PlayerInitiativeData, QuickHistoryEntry } from "./state";
-
-const CATEGORY_OPTIONS = ["Move", "Attack", "Charge Up", "Cast Spell", "Skill Check"];
 
 interface ItemInitiativeMeta {
   initiative: number;
@@ -41,9 +40,7 @@ export function App() {
   const [manualSelectionId, setManualSelectionId] = useState<string | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [draftAction, setDraftAction] = useState("");
-  const [draftCategory, setDraftCategory] = useState("");
   const [bulkActionText, setBulkActionText] = useState("");
-  const [bulkActionCategory, setBulkActionCategory] = useState("");
   const [bulkSelection, setBulkSelection] = useState<string[]>([]);
   const [history, setHistory] = useState<QuickHistoryEntry[]>([]);
   const [theme, setTheme] = useState<{ mode: string; text: { primary: string }; background: { default: string }; primary: { main: string } } | null>(null);
@@ -441,8 +438,7 @@ export function App() {
       return decl.ready ? "Ready" : "Waiting";
     }
 
-    const prefix = decl.category ? `[${decl.category}] ` : "";
-    return `${prefix}${decl.text}`.trim();
+    return decl.text;
   };
 
   const updateTokenOwner = async (tokenId: string, newOwnerId: string) => {
@@ -543,21 +539,20 @@ export function App() {
       ready,
       revealed: coreState.phase !== "plan",
       timestamp: Date.now(),
-      category: draftCategory || existing?.category,
       ownerId: playerId,
       queue: existing?.queue,
     };
     await setDeclaration(target.tokenId, next);
     if (ready && text) {
       try {
-        setHistory(pushQuickHistory(text, draftCategory || undefined));
+        setHistory(pushQuickHistory(text));
       } catch (e) {
         console.warn("Failed to record command history:", e);
       }
     }
   };
 
-  const queueActionForNextRumble = async (text: string, category?: string) => {
+  const queueActionForNextRumble = async (text: string) => {
     const target = selectedParticipant();
     if (!target) return;
 
@@ -568,7 +563,6 @@ export function App() {
 
     queue.push({
       text: text.trim(),
-      category,
       timestamp: Date.now(),
     });
 
@@ -577,14 +571,13 @@ export function App() {
       ready: existing?.ready ?? false,
       revealed: existing?.revealed ?? coreState.phase !== "plan",
       timestamp: existing?.timestamp ?? Date.now(),
-      category: existing?.category,
       ownerId: playerId,
       queue: queue.length > 0 ? queue : undefined,
     };
     await setDeclaration(target.tokenId, next);
   };
 
-  const applyBulkAction = async (actionText: string, actionCategory?: string) => {
+  const applyBulkAction = async (actionText: string) => {
     if (!bulkSelection.length || !actionText.trim()) return;
 
     const timestamp = Date.now();
@@ -595,7 +588,6 @@ export function App() {
         ready: true,
         revealed: coreState.phase !== "plan",
         timestamp,
-        category: actionCategory,
         ownerId: playerId,
         queue: existing?.queue,
       };
@@ -603,14 +595,13 @@ export function App() {
     }
 
     try {
-      setHistory(pushQuickHistory(actionText, actionCategory));
+      setHistory(pushQuickHistory(actionText));
     } catch (e) {
       console.warn("Failed to record command history:", e);
     }
 
     setBulkSelection([]);
     setBulkActionText("");
-    setBulkActionCategory("");
   };
 
   const advanceToResolve = async () => {
@@ -672,7 +663,8 @@ export function App() {
                 className="icon-button"
                 onClick={() =>
                   mutateCoreState((s) => {
-                    clearAllDeclarations();
+                    // Promote each declaration's first queued action; clear the rest.
+                    void advanceDeclarationsToNextRumble();
                     return {
                       ...s,
                       phase: "plan",
@@ -715,7 +707,7 @@ export function App() {
             </label>
             {target.delay !== undefined && (
               <label className="delay-input">
-                Delay (max {target.initiative - 1})
+                Delay
                 <input
                   type="number"
                   min="0"
@@ -727,39 +719,17 @@ export function App() {
             )}
           </div>
 
-          <label>
-            Category
-            <select value={draftCategory} onChange={(e) => setDraftCategory(e.target.value)}>
-              <option value="">None</option>
-              {CATEGORY_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
-          </label>
-
           {history.length > 0 && (
             <div className="history-list">
               <span className="history-label">Recent:</span>
               {history.slice(0, 10).map((entry, idx) => (
                 <button
-                  key={`${entry.text}::${entry.category ?? ""}::${idx}`}
+                  key={`${entry.text}::${idx}`}
                   type="button"
                   className="history-chip"
-                  title={
-                    entry.category
-                      ? `Fill "${entry.text}" (${entry.category}) — does not ready`
-                      : `Fill "${entry.text}" — does not ready`
-                  }
-                  onClick={() => {
-                    setDraftAction(entry.text);
-                    setDraftCategory(entry.category ?? "");
-                  }}
+                  title={`Fill "${entry.text}" — does not ready`}
+                  onClick={() => setDraftAction(entry.text)}
                 >
-                  {entry.category && (
-                    <span className="history-category">[{entry.category}]</span>
-                  )}
                   <span className="history-text">{entry.text}</span>
                 </button>
               ))}
@@ -776,7 +746,7 @@ export function App() {
 
           {canQueueNextAction && (
             <button
-              onClick={() => queueActionForNextRumble(draftAction, draftCategory)}
+              onClick={() => queueActionForNextRumble(draftAction)}
               disabled={!draftAction.trim()}
             >
               Queue Next Rumble
@@ -790,7 +760,6 @@ export function App() {
                 {declarations[target.tokenId].queue!.map((qAction, idx) => (
                   <li key={idx} className="queue-item">
                     <div className="queue-action">
-                      {qAction.category && <span className="queue-category">[{qAction.category}]</span>}
                       <span className="queue-text">{qAction.text}</span>
                     </div>
                     <button
@@ -895,39 +864,17 @@ export function App() {
             />
           </label>
 
-          <label>
-            Category
-            <select value={bulkActionCategory} onChange={(e) => setBulkActionCategory(e.target.value)}>
-              <option value="">None</option>
-              {CATEGORY_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
-          </label>
-
           {history.length > 0 && (
             <div className="history-list">
               <span className="history-label">Recent:</span>
               {history.slice(0, 10).map((entry, idx) => (
                 <button
-                  key={`${entry.text}::${entry.category ?? ""}::${idx}`}
+                  key={`${entry.text}::${idx}`}
                   type="button"
                   className="history-chip"
-                  title={
-                    entry.category
-                      ? `Fill "${entry.text}" (${entry.category}) — does not select tokens`
-                      : `Fill "${entry.text}" — does not select tokens`
-                  }
-                  onClick={() => {
-                    setBulkActionText(entry.text);
-                    setBulkActionCategory(entry.category ?? "");
-                  }}
+                  title={`Fill "${entry.text}" — does not select tokens`}
+                  onClick={() => setBulkActionText(entry.text)}
                 >
-                  {entry.category && (
-                    <span className="history-category">[{entry.category}]</span>
-                  )}
                   <span className="history-text">{entry.text}</span>
                 </button>
               ))}
@@ -935,7 +882,8 @@ export function App() {
           )}
 
           <button
-            onClick={() => applyBulkAction(bulkActionText, bulkActionCategory)}
+            className="primary apply-bulk"
+            onClick={() => applyBulkAction(bulkActionText)}
             disabled={!bulkSelection.length || !bulkActionText.trim()}
           >
             Apply to {bulkSelection.length} Token{bulkSelection.length !== 1 ? "s" : ""}

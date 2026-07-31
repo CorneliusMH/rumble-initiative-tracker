@@ -65,26 +65,23 @@ export function sanitizeDeclaration(input: unknown): Declaration | null {
   if (input === null || input === undefined) return null;
   if (typeof input !== "object") return null;
   const value = input as Partial<Declaration>;
-  
-  // Sanitize queue
+
   let queue: QueuedAction[] | undefined;
   if (Array.isArray(value.queue)) {
     queue = value.queue
       .filter((item) => item && typeof item === "object")
       .map((item) => ({
         text: typeof item.text === "string" ? item.text.slice(0, MAX_DECL_TEXT) : "",
-        category: typeof item.category === "string" ? item.category : undefined,
         timestamp: Number.isFinite(item.timestamp) ? Number(item.timestamp) : Date.now()
       }))
-      .slice(0, 3); // Max 3 queued actions
+      .slice(0, 3);
   }
-  
+
   return {
     text: typeof value.text === "string" ? value.text.slice(0, MAX_DECL_TEXT) : "",
     ready: Boolean(value.ready),
     revealed: Boolean(value.revealed),
     timestamp: Number.isFinite(value.timestamp) ? Number(value.timestamp) : Date.now(),
-    category: typeof value.category === "string" ? value.category : undefined,
     ownerId: typeof value.ownerId === "string" ? value.ownerId : undefined,
     queue: queue && queue.length > 0 ? queue : undefined
   };
@@ -143,6 +140,39 @@ export function clearAllDeclarations(): Promise<void> {
   });
 }
 
+// Advance all declarations to the next rumble: pop each queue's first entry into
+// the active declaration (auto-ready) and shift the queue; declarations without
+// a queued action are cleared. Runs as a single atomic setMetadata call.
+export function advanceDeclarationsToNextRumble(): Promise<void> {
+  return enqueue(async () => {
+    const metadata = await OBR.room.getMetadata();
+    const update: Record<string, Declaration | null> = {};
+    for (const [key, value] of Object.entries(metadata)) {
+      if (!key.startsWith(DECL_PREFIX)) continue;
+      const decl = sanitizeDeclaration(value);
+      if (!decl) {
+        update[key] = null;
+        continue;
+      }
+      const queue = decl.queue ?? [];
+      if (queue.length === 0) {
+        update[key] = null;
+        continue;
+      }
+      const [next, ...rest] = queue;
+      update[key] = {
+        text: next.text,
+        ready: true,
+        revealed: false,
+        timestamp: Date.now(),
+        ownerId: decl.ownerId,
+        queue: rest.length > 0 ? rest : undefined,
+      };
+    }
+    if (Object.keys(update).length) await OBR.room.setMetadata(update);
+  });
+}
+
 export interface PlayerInitiativeData {
   initiative: number;
   delay: number;
@@ -186,7 +216,6 @@ export function onMetadataChange(
 
 export interface QuickHistoryEntry {
   text: string;
-  category?: string;
 }
 
 export function getQuickHistory(): QuickHistoryEntry[] {
@@ -195,15 +224,12 @@ export function getQuickHistory(): QuickHistoryEntry[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    // Accept legacy string entries and current object entries.
+    // Accept legacy string entries and legacy object entries; ignore category.
     return parsed
       .map((entry): QuickHistoryEntry | null => {
         if (typeof entry === "string") return { text: entry };
         if (entry && typeof entry === "object" && typeof entry.text === "string") {
-          return {
-            text: entry.text,
-            category: typeof entry.category === "string" ? entry.category : undefined,
-          };
+          return { text: entry.text };
         }
         return null;
       })
@@ -214,14 +240,13 @@ export function getQuickHistory(): QuickHistoryEntry[] {
   }
 }
 
-export function pushQuickHistory(text: string, category?: string): QuickHistoryEntry[] {
+export function pushQuickHistory(text: string): QuickHistoryEntry[] {
   const trimmed = text.trim();
   if (!trimmed) return getQuickHistory();
-  const cat = category?.trim() || undefined;
   const current = getQuickHistory();
   const merged: QuickHistoryEntry[] = [
-    { text: trimmed, category: cat },
-    ...current.filter((entry) => !(entry.text === trimmed && entry.category === cat)),
+    { text: trimmed },
+    ...current.filter((entry) => entry.text !== trimmed),
   ].slice(0, 10);
   localStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
   return merged;

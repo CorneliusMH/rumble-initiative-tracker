@@ -15,7 +15,6 @@ export interface Participant {
 
 export interface QueuedAction {
   text: string;
-  category?: string;
   timestamp: number;
 }
 
@@ -24,7 +23,6 @@ export interface Declaration {
   ready: boolean;
   revealed: boolean;
   timestamp: number;
-  category?: string;
   ownerId?: string;
   queue?: QueuedAction[];
 }
