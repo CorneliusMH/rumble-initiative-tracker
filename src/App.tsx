@@ -143,13 +143,33 @@ export function App() {
                   try {
                     setSceneReady(isReady);
                     if (isReady) {
-                      const items = await OBR.scene.items.getItems();
+                      const [items, meta] = await Promise.all([
+                        OBR.scene.items.getItems(),
+                        OBR.scene.getMetadata(),
+                      ]);
                       setTokenParticipants(
                         deriveTokenParticipants(items as Item[], roleRef.current)
                       );
+                      const m = meta as Record<string, unknown>;
+                      setCoreState(sanitizeCore(m[CORE_KEY]));
+                      setDeclarations(readDeclarations(m));
+                      setPlayerInits(readPlayerInits(m));
                     } else {
+                      // No active scene — clear everything so a stale order
+                      // doesn't linger until a new scene loads.
                       setTokenParticipants([]);
+                      setCoreState(getDefaultCore());
+                      setDeclarations({});
+                      setPlayerInits({});
+                      setBulkSelection([]);
+                      setManualSelectionId(null);
+                      setEditingInitiativeId(null);
+                      setEditingQueueIdx(null);
                     }
+                    // Reset GM combat-log snapshots so the next scene starts fresh.
+                    logRef.current = [];
+                    coreSnapshotRef.current = null;
+                    declSnapshotRef.current = null;
                   } catch (e) {
                     console.warn("Error in onReadyChange:", e);
                   }
@@ -205,15 +225,8 @@ export function App() {
             }
 
             // 3. Fetch initial data independently — a failure in one must not skip the others.
-            try {
-              const meta = await OBR.room.getMetadata();
-              setCoreState(sanitizeCore(meta[CORE_KEY]));
-              setDeclarations(readDeclarations(meta));
-              setPlayerInits(readPlayerInits(meta as Record<string, unknown>));
-            } catch (e) {
-              console.warn("Failed to load initial room metadata:", e);
-            }
-
+            //    Scene metadata is only accessible when a scene is ready; if not,
+            //    onReadyChange above will fetch it once the scene loads.
             try {
               const allPlayers = await OBR.party.getPlayers();
               setPlayers(allPlayers);
@@ -223,10 +236,17 @@ export function App() {
 
             if (sceneIsReady) {
               try {
-                const items = await OBR.scene.items.getItems();
+                const [items, meta] = await Promise.all([
+                  OBR.scene.items.getItems(),
+                  OBR.scene.getMetadata(),
+                ]);
                 setTokenParticipants(deriveTokenParticipants(items as Item[], r));
+                const m = meta as Record<string, unknown>;
+                setCoreState(sanitizeCore(m[CORE_KEY]));
+                setDeclarations(readDeclarations(m));
+                setPlayerInits(readPlayerInits(m));
               } catch (e) {
-                console.warn("Failed to load initial scene items:", e);
+                console.warn("Failed to load initial scene state:", e);
               }
             }
 

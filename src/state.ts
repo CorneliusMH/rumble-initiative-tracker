@@ -71,7 +71,7 @@ function enqueue<T>(task: () => Promise<T>): Promise<T> {
 }
 
 export async function getCoreState(): Promise<CoreState> {
-  const metadata = await OBR.room.getMetadata();
+  const metadata = await OBR.scene.getMetadata();
   return sanitizeCore(metadata[CORE_KEY]);
 }
 
@@ -79,7 +79,7 @@ export function mutateCoreState(mutator: (state: CoreState) => CoreState): Promi
   return enqueue(async () => {
     const current = await getCoreState();
     const next = sanitizeCore(mutator(current));
-    await OBR.room.setMetadata({ [CORE_KEY]: next });
+    await OBR.scene.setMetadata({ [CORE_KEY]: next });
   });
 }
 
@@ -94,24 +94,24 @@ export function readDeclarations(metadata: Record<string, unknown>): Record<stri
 }
 
 export async function getAllDeclarations(): Promise<Record<string, Declaration>> {
-  const metadata = await OBR.room.getMetadata();
+  const metadata = await OBR.scene.getMetadata();
   return readDeclarations(metadata as Record<string, unknown>);
 }
 
 export function setDeclaration(tokenId: string, value: Declaration | null): Promise<void> {
   return enqueue(async () => {
-    await OBR.room.setMetadata({ [`${DECL_PREFIX}${tokenId}`]: value });
+    await OBR.scene.setMetadata({ [`${DECL_PREFIX}${tokenId}`]: value });
   });
 }
 
 export function clearAllDeclarations(): Promise<void> {
   return enqueue(async () => {
-    const metadata = await OBR.room.getMetadata();
+    const metadata = await OBR.scene.getMetadata();
     const update: Record<string, null> = {};
     for (const key of Object.keys(metadata)) {
       if (key.startsWith(DECL_PREFIX)) update[key] = null;
     }
-    if (Object.keys(update).length) await OBR.room.setMetadata(update);
+    if (Object.keys(update).length) await OBR.scene.setMetadata(update);
   });
 }
 
@@ -120,7 +120,7 @@ export function clearAllDeclarations(): Promise<void> {
 // a queued action are cleared. Runs as a single atomic setMetadata call.
 export function advanceDeclarationsToNextRumble(): Promise<void> {
   return enqueue(async () => {
-    const metadata = await OBR.room.getMetadata();
+    const metadata = await OBR.scene.getMetadata();
     const update: Record<string, Declaration | null> = {};
     for (const [key, value] of Object.entries(metadata)) {
       if (!key.startsWith(DECL_PREFIX)) continue;
@@ -144,7 +144,7 @@ export function advanceDeclarationsToNextRumble(): Promise<void> {
         queue: rest.length > 0 ? rest : undefined,
       };
     }
-    if (Object.keys(update).length) await OBR.room.setMetadata(update);
+    if (Object.keys(update).length) await OBR.scene.setMetadata(update);
   });
 }
 
@@ -179,14 +179,14 @@ export function setPlayerInit(
   value: PlayerInitiativeData | null
 ): Promise<void> {
   return enqueue(async () => {
-    await OBR.room.setMetadata({ [`${PLAYER_INIT_PREFIX}${playerId}`]: value });
+    await OBR.scene.setMetadata({ [`${PLAYER_INIT_PREFIX}${playerId}`]: value });
   });
 }
 
 export function onMetadataChange(
   callback: (metadata: Record<string, unknown>) => void
 ): () => void {
-  return OBR.room.onMetadataChange((metadata) => callback(metadata as Record<string, unknown>));
+  return OBR.scene.onMetadataChange((metadata) => callback(metadata as Record<string, unknown>));
 }
 
 export interface QuickHistoryEntry {

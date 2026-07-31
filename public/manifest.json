@@ -1,6 +1,6 @@
 {
   "name": "Rumble Initiative Tracker",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "manifest_version": 1,
   "author": "Cornelius",
   "description": "Three-rumble initiative tracker with private declare, all-ready auto-reveal, per-rumble queueing, and player auto-enrollment.",

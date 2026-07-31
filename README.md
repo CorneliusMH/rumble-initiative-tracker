@@ -67,16 +67,16 @@ Ready tokens show a ✓ marker. Type an action (or click a history chip to fill)
 
 ## Storage model
 
-All shared state lives under the namespace `com.rumble.initiative`.
+All shared state lives under the namespace `com.rumble.initiative`, and **all of it is scoped to the current scene**. Loading a new scene shows a fresh initiative order; returning to a scene that already had rumble initiative running restores that scene's round/rumble/phase, declarations, and per-player initiatives.
 
 - **Scene token membership + initiative** — scene-item metadata under `com.rumble.initiative/initiative`. A token is "in initiative" iff this key is present. Removing the key removes the token from the tracker.
-- **Per-player initiative** — room metadata under `com.rumble.initiative/player/<playerId>`. Room-level storage means the value is visible to every client and survives reloads; the UI restricts writes to that player or the GM.
-- **Shared session state** (round, rumble, phase) — room metadata under `com.rumble.initiative/core`.
-- **Per-participant declarations and queue** — room metadata under `com.rumble.initiative/decl/<participantId>`. `<participantId>` is a scene item id for tokens, or `player:<playerId>` for auto-enrolled player rows. Splitting per-participant keys avoids write contention with the core state and keeps every update inside Owlbear's 16 kB room-metadata cap.
-- **History chips** — local storage under `com.rumble.initiative/quick-history` (per-browser, not synced).
+- **Per-player initiative** — scene metadata under `com.rumble.initiative/player/<playerId>`.
+- **Shared session state** (round, rumble, phase) — scene metadata under `com.rumble.initiative/core`.
+- **Per-participant declarations and queue** — scene metadata under `com.rumble.initiative/decl/<participantId>`. `<participantId>` is a scene item id for tokens, or `player:<playerId>` for auto-enrolled player rows.
+- **History chips** — local storage under `com.rumble.initiative/quick-history` (per-browser, not synced, not scene-scoped).
 - A local promise-chain queue serializes writes from the same client so concurrent edits don't clobber each other.
 
-**Reset** only rewrites the `core` key. Declarations and per-player initiatives are left in place.
+**Reset** only rewrites the current scene's `core` key. Declarations and per-player initiatives are left in place.
 
 ## Permissions
 
