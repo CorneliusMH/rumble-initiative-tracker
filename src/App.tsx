@@ -17,7 +17,7 @@ import {
   setDeclaration,
   setPlayerInit,
 } from "./state";
-import type { CoreState, Declaration, Participant, Phase } from "./types";
+import type { CoreState, Declaration, Participant, Phase, QueuedAction } from "./types";
 import type { PlayerInitiativeData, QuickHistoryEntry } from "./state";
 
 interface ItemInitiativeMeta {
@@ -47,6 +47,8 @@ export function App() {
   const [obrReady, setObrReady] = useState(false);
   const [editingInitiativeId, setEditingInitiativeId] = useState<string | null>(null);
   const [editingInitiativeValue, setEditingInitiativeValue] = useState("");
+  const [editingQueueIdx, setEditingQueueIdx] = useState<number | null>(null);
+  const [editingQueueValue, setEditingQueueValue] = useState("");
   const roleRef = React.useRef<"GM" | "PLAYER">("PLAYER");
   const initializingRef = React.useRef(true);
 
@@ -575,6 +577,56 @@ export function App() {
       queue: queue.length > 0 ? queue : undefined,
     };
     await setDeclaration(target.tokenId, next);
+    const queuedText = text.trim();
+    if (queuedText) {
+      try {
+        setHistory(pushQuickHistory(queuedText));
+      } catch (e) {
+        console.warn("Failed to record command history:", e);
+      }
+    }
+  };
+
+  const writeQueue = async (
+    tokenId: string,
+    transform: (queue: QueuedAction[]) => QueuedAction[]
+  ) => {
+    const existing = declarations[tokenId];
+    if (!existing?.queue) return;
+    const nextQueue = transform([...existing.queue]);
+    const next: Declaration = {
+      ...existing,
+      queue: nextQueue.length > 0 ? nextQueue : undefined,
+    };
+    await setDeclaration(tokenId, next);
+  };
+
+  const updateQueueEntry = async (tokenId: string, idx: number, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    await writeQueue(tokenId, (q) =>
+      q.map((entry, i) =>
+        i === idx ? { ...entry, text: trimmed, timestamp: Date.now() } : entry
+      )
+    );
+  };
+
+  const moveQueueEntry = async (
+    tokenId: string,
+    idx: number,
+    direction: -1 | 1
+  ) => {
+    await writeQueue(tokenId, (q) => {
+      const target = idx + direction;
+      if (target < 0 || target >= q.length) return q;
+      const copy = [...q];
+      [copy[idx], copy[target]] = [copy[target], copy[idx]];
+      return copy;
+    });
+  };
+
+  const removeQueueEntry = async (tokenId: string, idx: number) => {
+    await writeQueue(tokenId, (q) => q.filter((_, i) => i !== idx));
   };
 
   const applyBulkAction = async (actionText: string) => {
@@ -757,30 +809,77 @@ export function App() {
             <div className="queue-display">
               <h3>Queued Actions ({declarations[target.tokenId].queue!.length}/3)</h3>
               <ul className="queue-list">
-                {declarations[target.tokenId].queue!.map((qAction, idx) => (
-                  <li key={idx} className="queue-item">
-                    <div className="queue-action">
-                      <span className="queue-text">{qAction.text}</span>
-                    </div>
-                    <button
-                      className="remove-queue"
-                      onClick={async () => {
-                        const existing = declarations[target.tokenId];
-                        if (existing?.queue) {
-                          const newQueue = existing.queue.filter((_, i) => i !== idx);
-                          const next: Declaration = {
-                            ...existing,
-                            queue: newQueue.length > 0 ? newQueue : undefined,
-                          };
-                          await setDeclaration(target.tokenId, next);
-                        }
-                      }}
-                      title="Remove this queued action"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
+                {declarations[target.tokenId].queue!.map((qAction, idx, arr) => {
+                  const isEditing = editingQueueIdx === idx;
+                  const commitEdit = async () => {
+                    await updateQueueEntry(target.tokenId, idx, editingQueueValue);
+                    setEditingQueueIdx(null);
+                    setEditingQueueValue("");
+                  };
+                  const cancelEdit = () => {
+                    setEditingQueueIdx(null);
+                    setEditingQueueValue("");
+                  };
+                  return (
+                    <li key={idx} className="queue-item">
+                      <div className="queue-action">
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            className="queue-edit-input"
+                            value={editingQueueValue}
+                            autoFocus
+                            onChange={(e) => setEditingQueueValue(e.target.value)}
+                            onBlur={commitEdit}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                              else if (e.key === "Escape") cancelEdit();
+                            }}
+                          />
+                        ) : (
+                          <span
+                            className="queue-text editable"
+                            title="Click to edit"
+                            onClick={() => {
+                              setEditingQueueIdx(idx);
+                              setEditingQueueValue(qAction.text);
+                            }}
+                          >
+                            {qAction.text}
+                          </span>
+                        )}
+                      </div>
+                      <div className="queue-controls">
+                        <button
+                          className="queue-move"
+                          disabled={idx === 0 || isEditing}
+                          onClick={() => moveQueueEntry(target.tokenId, idx, -1)}
+                          title="Move up"
+                          aria-label="Move up"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          className="queue-move"
+                          disabled={idx === arr.length - 1 || isEditing}
+                          onClick={() => moveQueueEntry(target.tokenId, idx, 1)}
+                          title="Move down"
+                          aria-label="Move down"
+                        >
+                          ▼
+                        </button>
+                        <button
+                          className="remove-queue"
+                          disabled={isEditing}
+                          onClick={() => removeQueueEntry(target.tokenId, idx)}
+                          title="Remove this queued action"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}

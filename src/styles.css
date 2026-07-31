@@ -368,7 +368,7 @@ button:disabled {
 }
 .history-chip {
   background: var(--bg-primary);
-  border: 1px solid var(--bg-secondary);
+  border: 1px solid var(--color-action);
   border-radius: 4px;
   padding: 5px 10px;
   font-size: 0.8rem;
@@ -383,8 +383,8 @@ button:disabled {
   align-items: center;
 }
 .history-chip:hover {
-  border-color: var(--color-action);
-  background: var(--bg-secondary);
+  background: var(--color-action);
+  color: var(--bg-primary);
 }
 .history-text {
   overflow: hidden;
@@ -524,6 +524,48 @@ button:disabled {
 .queue-text {
   color: var(--text-primary);
   word-break: break-word;
+}
+
+.queue-text.editable {
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+}
+.queue-text.editable:hover {
+  border-bottom-color: var(--color-action);
+}
+
+.queue-edit-input {
+  width: 100%;
+  padding: 4px 6px !important;
+  font-size: 0.8rem !important;
+  border-color: var(--color-action) !important;
+}
+
+.queue-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.queue-move {
+  padding: 2px 5px;
+  font-size: 0.7rem;
+  line-height: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--bg-secondary);
+  color: var(--text-primary);
+  margin: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.queue-move:hover:not(:disabled) {
+  border-color: var(--color-action);
+  color: var(--color-action);
+}
+.queue-move:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .remove-queue {
