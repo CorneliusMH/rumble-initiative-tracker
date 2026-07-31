@@ -831,8 +831,11 @@ export function App() {
 
   const target = selectedParticipant();
   const ready = participants.filter((p) => declarations[p.tokenId]?.ready).length;
+  const isResolvePhase = coreState.phase === "resolve";
   const canQueueNextAction =
-    target && declarations[target.tokenId]?.ready && coreState.phase === "plan";
+    !!target &&
+    ((coreState.phase === "plan" && !!declarations[target.tokenId]?.ready) ||
+      isResolvePhase);
 
   return (
     <main className="layout">
@@ -947,7 +950,12 @@ export function App() {
           <button
             onClick={() => setMyDeclaration(true)}
             className="primary"
-            disabled={!draftAction.trim()}
+            disabled={!draftAction.trim() || isResolvePhase}
+            title={
+              isResolvePhase
+                ? "Declared actions are locked during the resolve phase"
+                : undefined
+            }
           >
             {declarations[target.tokenId]?.ready ? "Update Ready" : "Ready"}
           </button>
