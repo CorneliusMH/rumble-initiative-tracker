@@ -328,7 +328,7 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .status-text {
@@ -336,13 +336,19 @@ button:disabled {
   color: var(--text-secondary);
   font-weight: 500;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .header-controls {
   display: flex;
+  flex-direction: row;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .header-controls button {
@@ -350,6 +356,22 @@ button:disabled {
   font-size: 0.75rem;
   margin: 0;
   min-width: 0;
+}
+
+.header-controls .icon-button {
+  padding: 2px 6px;
+  font-size: 1rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 26px;
+}
+
+.header-controls .icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* Queue display styles */
@@ -464,11 +486,14 @@ button:disabled {
   }
 
   .header-controls {
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: nowrap;
   }
 
   .header-controls button {
-    flex: 1;
-    min-width: auto;
+    flex: 0 0 auto;
+    min-width: 0;
+    padding: 4px 6px;
+    font-size: 0.7rem;
   }
 }

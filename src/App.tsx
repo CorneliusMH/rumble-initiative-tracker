@@ -627,13 +627,16 @@ export function App() {
           {role === "GM" && (
             <div className="header-controls">
               <button
+                className="icon-button"
                 onClick={() => advanceToResolve()}
                 disabled={coreState.phase === "resolve"}
-                title="Reveal all declarations and enter resolve phase"
+                title="Resolve — reveal all declarations and enter resolve phase"
+                aria-label="Resolve"
               >
-                Resolve
+                <span aria-hidden="true">▶</span>
               </button>
               <button
+                className="icon-button"
                 onClick={() =>
                   mutateCoreState((s) => {
                     clearAllDeclarations();
@@ -645,11 +648,19 @@ export function App() {
                     };
                   })
                 }
-                title="Move to next rumble"
+                title="Next Rumble"
+                aria-label="Next Rumble"
               >
-                Next Rumble
+                <span aria-hidden="true">⏩</span>
               </button>
-              <button onClick={() => mutateCoreState(() => getDefaultCore())} title="Reset all">Reset</button>
+              <button
+                className="icon-button"
+                onClick={() => mutateCoreState(() => getDefaultCore())}
+                title="Reset all"
+                aria-label="Reset"
+              >
+                <span aria-hidden="true">🔄</span>
+              </button>
             </div>
           )}
         </div>
