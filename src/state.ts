@@ -4,6 +4,8 @@ import type { CoreState, Declaration, Phase, QueuedAction } from "./types";
 export const NAMESPACE = "com.rumble.initiative";
 export const CORE_KEY = `${NAMESPACE}/core`;
 export const DECL_PREFIX = `${NAMESPACE}/decl/`;
+export const PLAYER_INIT_PREFIX = `${NAMESPACE}/player/`;
+export const PLAYER_PARTICIPANT_PREFIX = "player:";
 export const ITEM_META_KEY = `${NAMESPACE}/initiative`;
 const HISTORY_KEY = `${NAMESPACE}/quick-history`;
 
@@ -135,6 +137,41 @@ export function clearAllDeclarations(): Promise<void> {
       if (key.startsWith(DECL_PREFIX)) update[key] = null;
     }
     if (Object.keys(update).length) await OBR.room.setMetadata(update);
+  });
+}
+
+export interface PlayerInitiativeData {
+  initiative: number;
+  delay: number;
+}
+
+export function sanitizePlayerInit(input: unknown): PlayerInitiativeData | null {
+  if (!input || typeof input !== "object") return null;
+  const v = input as Partial<PlayerInitiativeData>;
+  return {
+    initiative: Number.isFinite(v.initiative) ? Math.max(0, Number(v.initiative)) : 0,
+    delay: Number.isFinite(v.delay) ? Math.max(0, Number(v.delay)) : 0,
+  };
+}
+
+export function readPlayerInits(
+  metadata: Record<string, unknown>
+): Record<string, PlayerInitiativeData> {
+  const out: Record<string, PlayerInitiativeData> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (!key.startsWith(PLAYER_INIT_PREFIX)) continue;
+    const sanitized = sanitizePlayerInit(value);
+    if (sanitized) out[key.slice(PLAYER_INIT_PREFIX.length)] = sanitized;
+  }
+  return out;
+}
+
+export function setPlayerInit(
+  playerId: string,
+  value: PlayerInitiativeData | null
+): Promise<void> {
+  return enqueue(async () => {
+    await OBR.room.setMetadata({ [`${PLAYER_INIT_PREFIX}${playerId}`]: value });
   });
 }
 

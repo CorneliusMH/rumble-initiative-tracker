@@ -1,11 +1,16 @@
 export type Phase = "plan" | "reveal" | "resolve";
 
+export type ParticipantKind = "token" | "player";
+
 export interface Participant {
+  // Unique key. For tokens: the scene item id. For players: `player:<playerId>`.
   tokenId: string;
+  kind: ParticipantKind;
   name: string;
   initiative: number;
   ownerId?: string;
   delay?: number;
+  visible?: boolean;
 }
 
 export interface QueuedAction {

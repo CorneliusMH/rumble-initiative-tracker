@@ -237,6 +237,19 @@ button:disabled {
   color: var(--bg-primary);
 }
 
+.entry.hidden-token {
+  opacity: 0.55;
+}
+
+.hidden-icon {
+  margin-right: 6px;
+  font-size: 0.9em;
+  vertical-align: middle;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+}
+
 .controls-section {
   padding: 10px 12px;
   display: flex;

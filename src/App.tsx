@@ -3,15 +3,19 @@ import OBR, { Item, Player } from "@owlbear-rodeo/sdk";
 import {
   CORE_KEY,
   ITEM_META_KEY,
+  PLAYER_PARTICIPANT_PREFIX,
   clearAllDeclarations,
   getDefaultCore,
   mutateCoreState,
   onMetadataChange,
   readDeclarations,
+  readPlayerInits,
   sanitizeCore,
   setDeclaration,
+  setPlayerInit,
 } from "./state";
 import type { CoreState, Declaration, Participant, Phase } from "./types";
+import type { PlayerInitiativeData } from "./state";
 
 const CATEGORY_OPTIONS = ["Move", "Attack", "Charge Up", "Cast Spell", "Skill Check"];
 
@@ -26,11 +30,13 @@ export function App() {
   const [sceneReady, setSceneReady] = useState(false);
   const [coreState, setCoreState] = useState<CoreState>(getDefaultCore());
   const [declarations, setDeclarations] = useState<Record<string, Declaration>>({});
-  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [tokenParticipants, setTokenParticipants] = useState<Participant[]>([]);
+  const [playerInits, setPlayerInits] = useState<Record<string, PlayerInitiativeData>>({});
   const [role, setRole] = useState<"GM" | "PLAYER">("PLAYER");
   const [playerId, setPlayerId] = useState("");
   const [playerName, setPlayerName] = useState("");
   const [selection, setSelection] = useState<string[]>([]);
+  const [manualSelectionId, setManualSelectionId] = useState<string | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [draftAction, setDraftAction] = useState("");
   const [draftCategory, setDraftCategory] = useState("");
@@ -107,12 +113,13 @@ export function App() {
 
             setCoreState(sanitizeCore(initialMetadata[CORE_KEY]));
             setDeclarations(readDeclarations(initialMetadata));
-            setParticipants(deriveParticipants(initialItems as Item[], r));
+            setPlayerInits(readPlayerInits(initialMetadata as Record<string, unknown>));
+            setTokenParticipants(deriveTokenParticipants(initialItems as Item[], r));
             setPlayers(allPlayers);
 
             if (sceneIsReady) {
               const items = await OBR.scene.items.getItems();
-              setParticipants(deriveParticipants(items as Item[], r));
+              setTokenParticipants(deriveTokenParticipants(items as Item[], r));
             }
 
             // Wait for OBR to be fully ready for listener callbacks
@@ -155,8 +162,8 @@ export function App() {
               unsubscribers.push(
                 OBR.scene.items.onChange((items) => {
                   try {
-                    const derived = deriveParticipants(items as Item[], roleRef.current);
-                    setParticipants(derived);
+                    const derived = deriveTokenParticipants(items as Item[], roleRef.current);
+                    setTokenParticipants(derived);
                   } catch (e) {
                     console.warn("Error in items onChange:", e);
                   }
@@ -172,6 +179,7 @@ export function App() {
                   try {
                     setCoreState(sanitizeCore(metadata[CORE_KEY]));
                     setDeclarations(readDeclarations(metadata));
+                    setPlayerInits(readPlayerInits(metadata));
                   } catch (e) {
                     console.warn("Error in metadata onChange:", e);
                   }
@@ -195,10 +203,10 @@ export function App() {
               console.warn("Failed to register party onChange:", e);
             }
 
-            // 4. Set up context menu for adding tokens to initiative
+            // 4. Set up context menu for adding/removing tokens to initiative
             try {
               OBR.contextMenu.create({
-                id: "com.rumble.initiative/add-to-initiative",
+                id: "com.rumble.initiative/toggle",
                 icons: [
                   {
                     icon: "",
@@ -206,18 +214,33 @@ export function App() {
                     filter: {
                       every: [
                         { key: "type", value: "IMAGE" },
-                        {
-                          key: [ITEM_META_KEY, "excluded"],
-                          value: true,
-                        },
+                        { key: ["metadata", ITEM_META_KEY], value: undefined },
+                      ],
+                      permissions: ["UPDATE"],
+                    },
+                  },
+                  {
+                    icon: "",
+                    label: "Remove from Rumble Initiative",
+                    filter: {
+                      every: [
+                        { key: "type", value: "IMAGE" },
                       ],
                       permissions: ["UPDATE"],
                     },
                   },
                 ],
                 onClick: async (context) => {
+                  // If every selected item is missing our metadata, add; otherwise remove.
+                  const shouldAdd = context.items.every(
+                    (item) => (item.metadata as Record<string, unknown>)[ITEM_META_KEY] === undefined
+                  );
                   for (const item of context.items) {
-                    await addTokenToInitiative(item.id);
+                    if (shouldAdd) {
+                      await addTokenToInitiative(item.id);
+                    } else {
+                      await removeTokenFromInitiative(item.id);
+                    }
                   }
                 },
               });
@@ -267,23 +290,6 @@ export function App() {
     };
   };
 
-  const initializeItemInitiative = async (item: Item) => {
-    const meta = readItemInitiative(item);
-    if (!meta) {
-      // Token doesn't have initiative metadata, set it to 0
-      await OBR.scene.items.updateItems([item.id], (items) => {
-        if (items.length > 0) {
-          const itemMeta = items[0].metadata as Record<string, unknown>;
-          itemMeta[ITEM_META_KEY] = {
-            initiative: 0,
-            ownerId: item.createdUserId,
-            delay: 0,
-          };
-        }
-      });
-    }
-  };
-
   const sortParticipants = (list: Participant[]): Participant[] => {
     return [...list].sort((a, b) => {
       const aInit = a.initiative - (a.delay || 0);
@@ -293,45 +299,86 @@ export function App() {
     });
   };
 
-  const deriveParticipants = (items: Item[], playerRole: "GM" | "PLAYER" = "PLAYER"): Participant[] => {
+  const deriveTokenParticipants = (
+    items: Item[],
+    playerRole: "GM" | "PLAYER" = "PLAYER"
+  ): Participant[] => {
     const out: Participant[] = [];
     for (const item of items) {
-      // Hide items from non-GM players if they're hidden in the scene
-      if (playerRole !== "GM" && !item.visible) {
-        continue;
-      }
-
-      let meta = readItemInitiative(item);
-      if (!meta) {
-        // Auto-initialize items without metadata
-        meta = {
-          initiative: 0,
-          ownerId: item.createdUserId,
-          delay: 0,
-        };
-        // Trigger the initialization in the background
-        void initializeItemInitiative(item);
-      }
-
-      // Skip if explicitly excluded by GM
-      if (meta.excluded) {
-        continue;
-      }
-
+      if (playerRole !== "GM" && !item.visible) continue;
+      const meta = readItemInitiative(item);
+      if (!meta) continue; // opt-in only: GM must add via context menu
+      if (meta.excluded) continue; // legacy safety
       out.push({
         tokenId: item.id,
+        kind: "token",
         name: typeof item.name === "string" && item.name ? item.name : "Token",
         initiative: meta.initiative,
         ownerId: meta.ownerId,
         delay: meta.delay,
+        visible: item.visible !== false,
       });
     }
-    return sortParticipants(out);
+    return out;
   };
 
+  const derivePlayerParticipants = (
+    partyPlayers: Player[],
+    selfId: string,
+    selfName: string,
+    selfRole: "GM" | "PLAYER",
+    inits: Record<string, PlayerInitiativeData>
+  ): Participant[] => {
+    const out: Participant[] = [];
+    const seen = new Set<string>();
+    // Include self if non-GM
+    if (selfId && selfRole !== "GM") {
+      const init = inits[selfId];
+      out.push({
+        tokenId: `${PLAYER_PARTICIPANT_PREFIX}${selfId}`,
+        kind: "player",
+        name: selfName || "You",
+        initiative: init?.initiative ?? 0,
+        ownerId: selfId,
+        delay: init?.delay ?? 0,
+      });
+      seen.add(selfId);
+    }
+    for (const p of partyPlayers) {
+      if (p.role === "GM") continue;
+      if (seen.has(p.id)) continue;
+      const init = inits[p.id];
+      out.push({
+        tokenId: `${PLAYER_PARTICIPANT_PREFIX}${p.id}`,
+        kind: "player",
+        name: p.name || "Player",
+        initiative: init?.initiative ?? 0,
+        ownerId: p.id,
+        delay: init?.delay ?? 0,
+      });
+      seen.add(p.id);
+    }
+    return out;
+  };
+
+  const participants: Participant[] = React.useMemo(
+    () =>
+      sortParticipants([
+        ...tokenParticipants,
+        ...derivePlayerParticipants(players, playerId, playerName, role, playerInits),
+      ]),
+    [tokenParticipants, players, playerId, playerName, role, playerInits]
+  );
+
   const selectedParticipant = (): Participant | null => {
-    if (selection.length === 0) return null;
-    return participants.find((p) => p.tokenId === selection[0]) ?? null;
+    // Prefer scene selection; fall back to a manually clicked participant row (e.g. a player row).
+    if (selection.length > 0) {
+      return participants.find((p) => p.tokenId === selection[0]) ?? null;
+    }
+    if (manualSelectionId) {
+      return participants.find((p) => p.tokenId === manualSelectionId) ?? null;
+    }
+    return null;
   };
 
   const canEditToken = (p: Participant): boolean => {
@@ -392,10 +439,7 @@ export function App() {
     await OBR.scene.items.updateItems([tokenId], (items) => {
       for (const item of items) {
         const meta = item.metadata as Record<string, unknown>;
-        const current = meta[ITEM_META_KEY] as Partial<ItemInitiativeMeta> | undefined;
-        if (current) {
-          meta[ITEM_META_KEY] = { ...current, excluded: true };
-        }
+        delete meta[ITEM_META_KEY];
       }
     });
   };
@@ -405,18 +449,33 @@ export function App() {
       for (const item of items) {
         const meta = item.metadata as Record<string, unknown>;
         const current = meta[ITEM_META_KEY] as Partial<ItemInitiativeMeta> | undefined;
-        if (current) {
-          meta[ITEM_META_KEY] = { ...current, excluded: false };
-        } else {
+        if (!current) {
           meta[ITEM_META_KEY] = {
             initiative: 0,
             ownerId: item.createdUserId,
             delay: 0,
-            excluded: false,
           };
         }
       }
     });
+  };
+
+  const updateParticipantInitiative = async (p: Participant, initiative: number) => {
+    if (p.kind === "player" && p.ownerId) {
+      const cur = playerInits[p.ownerId] ?? { initiative: 0, delay: 0 };
+      await setPlayerInit(p.ownerId, { ...cur, initiative: Math.max(0, initiative) });
+    } else {
+      await updateTokenInitiative(p.tokenId, initiative);
+    }
+  };
+
+  const updateParticipantDelay = async (p: Participant, delay: number) => {
+    if (p.kind === "player" && p.ownerId) {
+      const cur = playerInits[p.ownerId] ?? { initiative: 0, delay: 0 };
+      await setPlayerInit(p.ownerId, { ...cur, delay: Math.max(0, delay) });
+    } else {
+      await updateTokenDelay(p.tokenId, delay);
+    }
   };
 
   const setMyDeclaration = async (ready: boolean) => {
@@ -570,7 +629,7 @@ export function App() {
         <section className="editor-section">
           <h2>Declare Action</h2>
 
-          {role === "GM" && (
+          {role === "GM" && target.kind === "token" && (
             <div className="owner-info">
               <label>
                 Owner (Player)
@@ -607,7 +666,7 @@ export function App() {
                   min="0"
                   max={Math.max(0, target.initiative - 1)}
                   value={target.delay}
-                  onChange={(e) => updateTokenDelay(target.tokenId, parseInt(e.target.value) || 0)}
+                  onChange={(e) => updateParticipantDelay(target, parseInt(e.target.value) || 0)}
                 />
               </label>
             )}
@@ -742,22 +801,50 @@ export function App() {
       <section className="list-section">
         <h2>Initiative Order</h2>
         {participants.length === 0 ? (
-          <p className="muted">No tokens in initiative yet.</p>
+          <p className="muted">No one in initiative yet. GM: right-click a token and pick <em>Add to Rumble Initiative</em>.</p>
         ) : (
           <ul className="initiative-list">
             {participants.map((p) => {
               const action = actionDisplay(p);
-              const isSelected = p.tokenId === selection[0];
+              const isSelected =
+                p.tokenId === selection[0] || p.tokenId === manualSelectionId;
               const displayInitiative = p.delay ? `${p.initiative - p.delay}` : `${p.initiative}`;
               const isEditing = editingInitiativeId === p.tokenId;
+              const editable = canEditToken(p);
+              const isHidden = p.kind === "token" && p.visible === false;
 
               return (
                 <li
                   key={p.tokenId}
-                  className={`entry ${isSelected ? "mine" : ""}`}
-                  onClick={() => OBR.player.select([p.tokenId])}
+                  className={`entry ${isSelected ? "mine" : ""} ${p.kind === "player" ? "player-row" : ""} ${isHidden ? "hidden-token" : ""}`}
+                  onClick={() => {
+                    if (p.kind === "token") {
+                      setManualSelectionId(null);
+                      void OBR.player.select([p.tokenId]);
+                    } else {
+                      // Player rows can't be selected in the scene; use manual selection.
+                      void OBR.player.select([]);
+                      setManualSelectionId(p.tokenId);
+                    }
+                  }}
                 >
-                  <span className="name">{p.name}</span>
+                  <span className="name">
+                    {isHidden && (
+                      <span className="hidden-icon" title="Hidden from players" aria-label="Hidden">
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          width="14"
+                          height="14"
+                          fill="currentColor"
+                          aria-hidden="true"
+                        >
+                          <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z" />
+                        </svg>
+                      </span>
+                    )}
+                    {p.name}
+                  </span>
                   {isEditing ? (
                     <input
                       type="number"
@@ -766,7 +853,7 @@ export function App() {
                       onChange={(e) => setEditingInitiativeValue(e.target.value)}
                       onBlur={async () => {
                         const newInit = Math.max(0, parseInt(editingInitiativeValue) || 0);
-                        await updateTokenInitiative(p.tokenId, newInit);
+                        await updateParticipantInitiative(p, newInit);
                         setEditingInitiativeId(null);
                         setEditingInitiativeValue("");
                       }}
@@ -781,19 +868,20 @@ export function App() {
                     />
                   ) : (
                     <span
-                      className="init"
+                      className={`init ${editable ? "editable" : ""}`}
                       onClick={(e) => {
+                        if (!editable) return;
                         e.stopPropagation();
                         setEditingInitiativeId(p.tokenId);
                         setEditingInitiativeValue(String(p.initiative));
                       }}
-                      title="Click to edit initiative"
+                      title={editable ? "Click to edit initiative" : "Only the owner or GM can edit"}
                     >
                       {displayInitiative}
                     </span>
                   )}
                   {action && <span className="action">{action}</span>}
-                  {role === "GM" && (
+                  {role === "GM" && p.kind === "token" && (
                     <button
                       className="remove-token"
                       onClick={(e) => {
