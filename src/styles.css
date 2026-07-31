@@ -321,6 +321,74 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+/* Row-group cues for the GM bulk selector. Order in list:
+   1) not-ready GM tokens, 2) not-ready player tokens,
+   3) ready GM tokens, 4) ready player tokens. */
+.bulk-checkbox-label.grp-notready-gm { color: var(--text-primary); font-weight: 500; }
+.bulk-checkbox-label.grp-notready-player { color: var(--color-action); font-weight: 500; }
+.bulk-checkbox-label.grp-ready-gm { color: var(--text-secondary); }
+.bulk-checkbox-label.grp-ready-player { color: var(--text-secondary); font-style: italic; }
+.bulk-status {
+  margin-left: 4px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+.bulk-group-divider {
+  grid-column: 1 / -1;
+  height: 1px;
+  background: var(--bg-secondary);
+  margin: 2px 0;
+}
+
+/* Recent-command history chips (shared by player and GM sections). */
+.history-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin: 8px 0;
+}
+.history-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-right: 4px;
+}
+.history-chip {
+  background: var(--bg-primary);
+  border: 1px solid var(--bg-secondary);
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.history-chip:hover {
+  border-color: var(--color-action);
+}
+.history-category {
+  color: var(--color-action);
+  font-size: 0.7rem;
+}
+.history-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Read-only initiative rows for non-GM players. */
+.entry.readonly {
+  cursor: default;
+}
+.entry.readonly:hover {
+  background: inherit;
+}
+
 /* Header layout with controls */
 .header-top {
   display: flex;

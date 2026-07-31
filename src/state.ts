@@ -184,23 +184,45 @@ export function onMetadataChange(
   return OBR.room.onMetadataChange((metadata) => callback(metadata as Record<string, unknown>));
 }
 
-export function getQuickHistory(): string[] {
+export interface QuickHistoryEntry {
+  text: string;
+  category?: string;
+}
+
+export function getQuickHistory(): QuickHistoryEntry[] {
   try {
     const raw = localStorage.getItem(HISTORY_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((entry) => typeof entry === "string").slice(0, 10);
+    // Accept legacy string entries and current object entries.
+    return parsed
+      .map((entry): QuickHistoryEntry | null => {
+        if (typeof entry === "string") return { text: entry };
+        if (entry && typeof entry === "object" && typeof entry.text === "string") {
+          return {
+            text: entry.text,
+            category: typeof entry.category === "string" ? entry.category : undefined,
+          };
+        }
+        return null;
+      })
+      .filter((e): e is QuickHistoryEntry => e !== null)
+      .slice(0, 10);
   } catch {
     return [];
   }
 }
 
-export function pushQuickHistory(text: string): string[] {
+export function pushQuickHistory(text: string, category?: string): QuickHistoryEntry[] {
   const trimmed = text.trim();
   if (!trimmed) return getQuickHistory();
+  const cat = category?.trim() || undefined;
   const current = getQuickHistory();
-  const merged = [trimmed, ...current.filter((entry) => entry !== trimmed)].slice(0, 10);
+  const merged: QuickHistoryEntry[] = [
+    { text: trimmed, category: cat },
+    ...current.filter((entry) => !(entry.text === trimmed && entry.category === cat)),
+  ].slice(0, 10);
   localStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
   return merged;
 }

@@ -6,8 +6,10 @@ import {
   PLAYER_PARTICIPANT_PREFIX,
   clearAllDeclarations,
   getDefaultCore,
+  getQuickHistory,
   mutateCoreState,
   onMetadataChange,
+  pushQuickHistory,
   readDeclarations,
   readPlayerInits,
   sanitizeCore,
@@ -15,7 +17,7 @@ import {
   setPlayerInit,
 } from "./state";
 import type { CoreState, Declaration, Participant, Phase } from "./types";
-import type { PlayerInitiativeData } from "./state";
+import type { PlayerInitiativeData, QuickHistoryEntry } from "./state";
 
 const CATEGORY_OPTIONS = ["Move", "Attack", "Charge Up", "Cast Spell", "Skill Check"];
 
@@ -43,6 +45,7 @@ export function App() {
   const [bulkActionText, setBulkActionText] = useState("");
   const [bulkActionCategory, setBulkActionCategory] = useState("");
   const [bulkSelection, setBulkSelection] = useState<string[]>([]);
+  const [history, setHistory] = useState<QuickHistoryEntry[]>([]);
   const [theme, setTheme] = useState<{ mode: string; text: { primary: string }; background: { default: string }; primary: { main: string } } | null>(null);
   const [obrReady, setObrReady] = useState(false);
   const [editingInitiativeId, setEditingInitiativeId] = useState<string | null>(null);
@@ -267,6 +270,13 @@ export function App() {
               }
             }
 
+            // Load recent-command history from localStorage.
+            try {
+              setHistory(getQuickHistory());
+            } catch (e) {
+              console.warn("Failed to load quick history:", e);
+            }
+
             // Mark initialization as complete
             initializingRef.current = false;
             setObrReady(true);
@@ -399,8 +409,16 @@ export function App() {
   );
 
   const selectedParticipant = (): Participant | null => {
-    // Manual (popover) selection takes priority so a stale scene selection can't
-    // steal focus after a player clicks their own row.
+    // Non-GM players always act as themselves; scene selection is irrelevant.
+    if (role !== "GM") {
+      return (
+        participants.find(
+          (p) => p.kind === "player" && p.ownerId === playerId
+        ) ?? null
+      );
+    }
+    // GM: manual (popover) selection takes priority so a stale scene selection
+    // can't steal focus after clicking a player row in the initiative list.
     if (manualSelectionId) {
       return participants.find((p) => p.tokenId === manualSelectionId) ?? null;
     }
@@ -530,6 +548,13 @@ export function App() {
       queue: existing?.queue,
     };
     await setDeclaration(target.tokenId, next);
+    if (ready && text) {
+      try {
+        setHistory(pushQuickHistory(text, draftCategory || undefined));
+      } catch (e) {
+        console.warn("Failed to record command history:", e);
+      }
+    }
   };
 
   const queueActionForNextRumble = async (text: string, category?: string) => {
@@ -575,6 +600,12 @@ export function App() {
         queue: existing?.queue,
       };
       await setDeclaration(tokenId, next);
+    }
+
+    try {
+      setHistory(pushQuickHistory(actionText, actionCategory));
+    } catch (e) {
+      console.warn("Failed to record command history:", e);
     }
 
     setBulkSelection([]);
@@ -668,28 +699,9 @@ export function App() {
         </div>
       </section>
 
-      {target && canEditToken(target) && (
+      {role !== "GM" && target && canEditToken(target) && (
         <section className="editor-section">
           <h2>Declare Action</h2>
-
-          {role === "GM" && target.kind === "token" && (
-            <div className="owner-info">
-              <label>
-                Owner (Player)
-                <select
-                  value={target.ownerId || ""}
-                  onChange={(e) => updateTokenOwner(target.tokenId, e.target.value)}
-                >
-                  <option value="">Select player...</option>
-                  {players.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          )}
 
           <div className="action-row">
             <label className="action-input">
@@ -726,6 +738,33 @@ export function App() {
               ))}
             </select>
           </label>
+
+          {history.length > 0 && (
+            <div className="history-list">
+              <span className="history-label">Recent:</span>
+              {history.slice(0, 10).map((entry, idx) => (
+                <button
+                  key={`${entry.text}::${entry.category ?? ""}::${idx}`}
+                  type="button"
+                  className="history-chip"
+                  title={
+                    entry.category
+                      ? `Fill "${entry.text}" (${entry.category}) — does not ready`
+                      : `Fill "${entry.text}" — does not ready`
+                  }
+                  onClick={() => {
+                    setDraftAction(entry.text);
+                    setDraftCategory(entry.category ?? "");
+                  }}
+                >
+                  {entry.category && (
+                    <span className="history-category">[{entry.category}]</span>
+                  )}
+                  <span className="history-text">{entry.text}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <button
             onClick={() => setMyDeclaration(true)}
@@ -781,25 +820,69 @@ export function App() {
 
       {role === "GM" && (
         <section className="bulk-actions-section">
-          <h2>Bulk Action (GM)</h2>
+          <h2>Declare Actions (GM)</h2>
           <div className="bulk-token-list">
             <label className="bulk-label">Select tokens:</label>
-            {participants.map((p) => (
-              <label key={p.tokenId} className="bulk-checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={bulkSelection.includes(p.tokenId)}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setBulkSelection([...bulkSelection, p.tokenId]);
-                    } else {
-                      setBulkSelection(bulkSelection.filter((id) => id !== p.tokenId));
-                    }
-                  }}
-                />
-                <span>{p.name}</span>
-              </label>
-            ))}
+            {(() => {
+              // Group order:
+              //   1) Not-ready GM tokens  (kind === "token")
+              //   2) Not-ready player tokens  (kind === "player")
+              //   3) Ready GM tokens
+              //   4) Ready player tokens
+              // Within each group, keep initiative order (participants is already sorted).
+              const groupRank = (p: Participant): number => {
+                const isReady = !!declarations[p.tokenId]?.ready;
+                const isPlayer = p.kind === "player";
+                if (!isReady && !isPlayer) return 0;
+                if (!isReady && isPlayer) return 1;
+                if (isReady && !isPlayer) return 2;
+                return 3;
+              };
+              const sorted = [...participants].sort(
+                (a, b) => groupRank(a) - groupRank(b)
+              );
+              let lastRank = -1;
+              return sorted.map((p) => {
+                const rank = groupRank(p);
+                const showDivider = rank !== lastRank && lastRank !== -1;
+                lastRank = rank;
+                const isReady = !!declarations[p.tokenId]?.ready;
+                const isPlayer = p.kind === "player";
+                const groupClass = isPlayer
+                  ? isReady
+                    ? "grp-ready-player"
+                    : "grp-notready-player"
+                  : isReady
+                    ? "grp-ready-gm"
+                    : "grp-notready-gm";
+                return (
+                  <React.Fragment key={p.tokenId}>
+                    {showDivider && <span className="bulk-group-divider" />}
+                    <label className={`bulk-checkbox-label ${groupClass}`}>
+                      <input
+                        type="checkbox"
+                        checked={bulkSelection.includes(p.tokenId)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setBulkSelection([...bulkSelection, p.tokenId]);
+                          } else {
+                            setBulkSelection(
+                              bulkSelection.filter((id) => id !== p.tokenId)
+                            );
+                          }
+                        }}
+                      />
+                      <span className="bulk-name">{p.name}</span>
+                      {isReady && (
+                        <span className="bulk-status" aria-label="Ready">
+                          ✓
+                        </span>
+                      )}
+                    </label>
+                  </React.Fragment>
+                );
+              });
+            })()}
           </div>
 
           <label>
@@ -823,6 +906,33 @@ export function App() {
               ))}
             </select>
           </label>
+
+          {history.length > 0 && (
+            <div className="history-list">
+              <span className="history-label">Recent:</span>
+              {history.slice(0, 10).map((entry, idx) => (
+                <button
+                  key={`${entry.text}::${entry.category ?? ""}::${idx}`}
+                  type="button"
+                  className="history-chip"
+                  title={
+                    entry.category
+                      ? `Fill "${entry.text}" (${entry.category}) — does not select tokens`
+                      : `Fill "${entry.text}" — does not select tokens`
+                  }
+                  onClick={() => {
+                    setBulkActionText(entry.text);
+                    setBulkActionCategory(entry.category ?? "");
+                  }}
+                >
+                  {entry.category && (
+                    <span className="history-category">[{entry.category}]</span>
+                  )}
+                  <span className="history-text">{entry.text}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <button
             onClick={() => applyBulkAction(bulkActionText, bulkActionCategory)}
@@ -851,8 +961,10 @@ export function App() {
               return (
                 <li
                   key={p.tokenId}
-                  className={`entry ${isSelected ? "mine" : ""} ${p.kind === "player" ? "player-row" : ""} ${isHidden ? "hidden-token" : ""}`}
+                  className={`entry ${isSelected ? "mine" : ""} ${p.kind === "player" ? "player-row" : ""} ${isHidden ? "hidden-token" : ""} ${role !== "GM" ? "readonly" : ""}`}
                   onClick={() => {
+                    // Non-GM players don't select rows — they always declare as themselves.
+                    if (role !== "GM") return;
                     if (p.kind === "token") {
                       setManualSelectionId(null);
                       void OBR.player.select([p.tokenId]);
