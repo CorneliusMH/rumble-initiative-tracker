@@ -104,28 +104,8 @@ export function App() {
             setSceneReady(sceneIsReady);
             setSelection(sel ?? []);
 
-            // 2. Load all initial data
-            const [initialMetadata, initialItems, allPlayers] = await Promise.all([
-              OBR.room.getMetadata(),
-              OBR.scene.items.getItems(),
-              OBR.party.getPlayers(),
-            ]);
-
-            setCoreState(sanitizeCore(initialMetadata[CORE_KEY]));
-            setDeclarations(readDeclarations(initialMetadata));
-            setPlayerInits(readPlayerInits(initialMetadata as Record<string, unknown>));
-            setTokenParticipants(deriveTokenParticipants(initialItems as Item[], r));
-            setPlayers(allPlayers);
-
-            if (sceneIsReady) {
-              const items = await OBR.scene.items.getItems();
-              setTokenParticipants(deriveTokenParticipants(items as Item[], r));
-            }
-
-            // Wait for OBR to be fully ready for listener callbacks
-            await new Promise((resolve) => setTimeout(resolve, 250));
-
-            // 3. AFTER all initial state is set and a small delay, set up the listeners
+            // 2. Register listeners BEFORE initial data fetches so we don't miss updates
+            //    if one of the fetches fails or is slow (e.g. items on a not-yet-ready scene).
             const unsubscribers: Array<(() => void) | void> = [];
 
             try {
@@ -146,9 +126,17 @@ export function App() {
 
             try {
               unsubscribers.push(
-                OBR.scene.onReadyChange((isReady) => {
+                OBR.scene.onReadyChange(async (isReady) => {
                   try {
                     setSceneReady(isReady);
+                    if (isReady) {
+                      const items = await OBR.scene.items.getItems();
+                      setTokenParticipants(
+                        deriveTokenParticipants(items as Item[], roleRef.current)
+                      );
+                    } else {
+                      setTokenParticipants([]);
+                    }
                   } catch (e) {
                     console.warn("Error in onReadyChange:", e);
                   }
@@ -201,6 +189,32 @@ export function App() {
               );
             } catch (e) {
               console.warn("Failed to register party onChange:", e);
+            }
+
+            // 3. Fetch initial data independently — a failure in one must not skip the others.
+            try {
+              const meta = await OBR.room.getMetadata();
+              setCoreState(sanitizeCore(meta[CORE_KEY]));
+              setDeclarations(readDeclarations(meta));
+              setPlayerInits(readPlayerInits(meta as Record<string, unknown>));
+            } catch (e) {
+              console.warn("Failed to load initial room metadata:", e);
+            }
+
+            try {
+              const allPlayers = await OBR.party.getPlayers();
+              setPlayers(allPlayers);
+            } catch (e) {
+              console.warn("Failed to load initial party:", e);
+            }
+
+            if (sceneIsReady) {
+              try {
+                const items = await OBR.scene.items.getItems();
+                setTokenParticipants(deriveTokenParticipants(items as Item[], r));
+              } catch (e) {
+                console.warn("Failed to load initial scene items:", e);
+              }
             }
 
             // 4. Set up context menu for adding/removing tokens to initiative
@@ -290,6 +304,15 @@ export function App() {
     };
   };
 
+  // Prefer the token's overlay display text; fall back to the underlying item name.
+  const getTokenDisplayName = (item: Item): string => {
+    const text = (item as { text?: { plainText?: unknown } }).text;
+    const plain = typeof text?.plainText === "string" ? text.plainText.trim() : "";
+    if (plain) return plain;
+    if (typeof item.name === "string" && item.name.trim()) return item.name;
+    return "Token";
+  };
+
   const sortParticipants = (list: Participant[]): Participant[] => {
     return [...list].sort((a, b) => {
       const aInit = a.initiative - (a.delay || 0);
@@ -312,7 +335,7 @@ export function App() {
       out.push({
         tokenId: item.id,
         kind: "token",
-        name: typeof item.name === "string" && item.name ? item.name : "Token",
+        name: getTokenDisplayName(item),
         initiative: meta.initiative,
         ownerId: meta.ownerId,
         delay: meta.delay,
