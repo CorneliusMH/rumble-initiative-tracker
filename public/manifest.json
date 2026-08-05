@@ -1,6 +1,6 @@
 {
   "name": "Rumble Initiative Tracker",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "manifest_version": 1,
   "author": "Cornelius",
   "description": "Initiative tracker with 3 actions per round, with plan and resolve phase. Auto-advances to resolve phase when all are ready.",
