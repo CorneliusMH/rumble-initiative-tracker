@@ -4,13 +4,15 @@ description: Initiative tracker for Rumble Combat — 3 rumbles per round, with 
 author: Cornelius
 tags:
   - combat
+  - initiative
+  - pathfinder
 manifest: https://rumble-initiative-tracker-beta.onrender.com/manifest.json
 learn-more: https://github.com/CorneliusMH/rumble-initiative-tracker
 ---
 
 # Rumble Initiative Tracker
 
-An initiative tracker for **Rumble Combat**: 3 rumbles per round, each rumble alternating between a private **Plan** phase and a simultaneous **Resolve** phase.
+An initiative tracker for **Rumble Combat** hack, which is currently being used by me for Pathfinder 2nd Edition. 3 rumbles per round - one per action - and each one alternating between a private **Plan** phase and a simultaneous **Resolve** phase.
 
 ## How a round works
 
@@ -23,28 +25,29 @@ The header always shows `Rumble X.Y | phase | Ready: n/total`. Rumble .1 and .3 
 
 ## Non-GM Player Usage
 
-- Players are automatically added to the initiative list. 
-- Players set their own initiative.
-- In the **Plan** phase, players input their action and click **Ready**.
-- Players can click on history tile to repeat a previously declared action.
-- Players can queue up to 3 more actions once they have declared their action for the current Rumble.
+- **Players are auto-added.** Every non-GM in the room appears as a row automatically.
+- **Players set their own initiative** by clicking the number on their own row. GMs can edit any row.
+
+### Plan Phase
+
+#### Input your action!
+- Type your action into the box, or optionally click on a history tile to repeat a previously declared action.
+- History tiles come from local browser storage.
+- Optionally, delay your action to later in the initiative. Your initiative is lowered by the amount entered.
+- Then click **Ready**.
+
+#### Queue actions!
+- Once you have entered your action and clicked **Ready**, you can queue up to three more actions using **Queue Next Rumble**.
 - Queued actions can be re-arranged, edited, or removed.
 - The next queued action is auto-readied when the resolve plan is complete.
 
-## Participants
+## GM Usage
 
-- **Players are auto-added.** Every non-GM in the room appears as a row automatically.
-- **Players set their own initiative** by clicking the number on their own row. GMs can edit any row.
-- **GM adds a token to initiative** by right-clicking it on the map and picking **Add to Rumble Initiative**. Use **Remove from Rumble Initiative** (or the ✕ on the row) to take it out.
-- **Hidden scene tokens** disappear from every non-GM player's list. The GM still sees them, dimmed.
+- **Add NPC tokens to initiative** by right-clicking it on the map and picking **Add to Rumble Initiative**. Use **Remove from Rumble Initiative** (or the ✕ on the row) to remove it.
+- **Hidden tokens** disappear from every non-GM player's list. The GM still sees them, dimmed and they can be modified as usual.
+- Bulk Declare actions by selecting which tokens (or players) to declare actions for and to declare the action.
 
-## Declaring actions
-
-- Type your action, optionally set a **Delay** (positive delay lowers your initiative), then click **Ready**.
-- Click a **history chip** to fill the input from your last 10 unique actions.
-- Click **Queue Next Rumble** to line up to 3 future actions. Queued entries can be edited inline, reordered with ▲ / ▼, or removed with ✕. When the GM advances to the next rumble, the top queued entry is promoted to your active declaration and auto-Readied.
-
-## GM controls
+### GM controls
 
 - **▶ Resolve** — flip the current rumble from Plan to Resolve.
 - **⏩ Next Rumble** — end the current rumble, promote queued actions, and tick the counter (1 → 2 → 3 → 1, round +1 on rollover).
@@ -58,10 +61,6 @@ A **Declare Actions (GM)** panel below the initiative list lets the GM declare f
 ## Storage
 
 All shared state is scoped to the current scene under the namespace `com.rumble.initiative`. Switching scenes shows a fresh order; returning to a scene restores its round, rumble, phase, declarations, and per-player initiatives. History chips are stored in local storage (per-browser, not synced).
-
-## Permissions
-
-The extension requests no OBR permissions.
 
 ## Support
 

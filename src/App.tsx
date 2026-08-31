@@ -5,30 +5,29 @@ import {
   ITEM_META_KEY,
   PLAYER_PARTICIPANT_PREFIX,
   advanceDeclarationsToNextRumble,
+  appendLogEntries,
+  clearLog,
   getDefaultCore,
   getQuickHistory,
   mutateCoreState,
   onMetadataChange,
   pushQuickHistory,
   readDeclarations,
+  readLog,
   readPlayerInits,
+  revertDeclarationsToPlanning,
   sanitizeCore,
   setDeclaration,
   setPlayerInit,
 } from "./state";
 import type { CoreState, Declaration, Participant, QueuedAction } from "./types";
-import type { PlayerInitiativeData, QuickHistoryEntry } from "./state";
+import type { LogEntry, PlayerInitiativeData, QuickHistoryEntry } from "./state";
 
 interface ItemInitiativeMeta {
   initiative: number;
   ownerId?: string;
   delay?: number;
   excluded?: boolean;
-}
-
-interface LogEntry {
-  timestamp: number;
-  text: string;
 }
 
 export function App() {
@@ -52,15 +51,26 @@ export function App() {
   const [editingInitiativeValue, setEditingInitiativeValue] = useState("");
   const [editingQueueIdx, setEditingQueueIdx] = useState<number | null>(null);
   const [editingQueueValue, setEditingQueueValue] = useState("");
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const [logOpen, setLogOpen] = useState(false);
+  const [bulkCollapsed, setBulkCollapsed] = useState(false);
   const roleRef = React.useRef<"GM" | "PLAYER">("PLAYER");
   const initializingRef = React.useRef(true);
 
-  // GM-only combat log (kept locally on this client; exported as a .txt file).
-  const logRef = React.useRef<LogEntry[]>([]);
+  // Command history navigation (arrow up/down) for the two action inputs.
+  const [draftHistoryIdx, setDraftHistoryIdx] = useState(-1);
+  const [bulkHistoryIdx, setBulkHistoryIdx] = useState(-1);
+  const draftStashRef = React.useRef("");
+  const bulkStashRef = React.useRef("");
+
+  // GM-only combat log, persisted in scene metadata so it is tied to the scene.
   const coreSnapshotRef = React.useRef<CoreState | null>(null);
   const declSnapshotRef = React.useRef<Record<string, Declaration> | null>(null);
   const participantsRef = React.useRef<Participant[]>([]);
   const playersRef = React.useRef<Player[]>([]);
+  // Set while the GM reverts a rumble to planning so the mass un-ready that
+  // follows isn't logged once per participant.
+  const suppressUnreadyLogRef = React.useRef(false);
 
   // Initialize theme - REMOVED, will be done inside OBR.onReady
   // useEffect(() => { ... })
@@ -154,6 +164,7 @@ export function App() {
                       setCoreState(sanitizeCore(m[CORE_KEY]));
                       setDeclarations(readDeclarations(m));
                       setPlayerInits(readPlayerInits(m));
+                      setLog(readLog(m));
                     } else {
                       // No active scene — clear everything so a stale order
                       // doesn't linger until a new scene loads.
@@ -161,13 +172,13 @@ export function App() {
                       setCoreState(getDefaultCore());
                       setDeclarations({});
                       setPlayerInits({});
+                      setLog([]);
                       setBulkSelection([]);
                       setManualSelectionId(null);
                       setEditingInitiativeId(null);
                       setEditingQueueIdx(null);
                     }
                     // Reset GM combat-log snapshots so the next scene starts fresh.
-                    logRef.current = [];
                     coreSnapshotRef.current = null;
                     declSnapshotRef.current = null;
                   } catch (e) {
@@ -201,6 +212,7 @@ export function App() {
                     setCoreState(sanitizeCore(metadata[CORE_KEY]));
                     setDeclarations(readDeclarations(metadata));
                     setPlayerInits(readPlayerInits(metadata));
+                    setLog(readLog(metadata));
                   } catch (e) {
                     console.warn("Error in metadata onChange:", e);
                   }
@@ -245,6 +257,7 @@ export function App() {
                 setCoreState(sanitizeCore(m[CORE_KEY]));
                 setDeclarations(readDeclarations(m));
                 setPlayerInits(readPlayerInits(m));
+                setLog(readLog(m));
               } catch (e) {
                 console.warn("Failed to load initial scene state:", e);
               }
@@ -457,14 +470,16 @@ export function App() {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   };
 
-  const appendLog = React.useCallback((text: string) => {
-    logRef.current.push({ timestamp: Date.now(), text });
+  const appendLog = React.useCallback((...texts: string[]) => {
+    void appendLogEntries(texts).catch((e) =>
+      console.warn("Failed to write combat log:", e)
+    );
   }, []);
 
   const downloadCombatLog = () => {
-    const lines = logRef.current.length
-      ? logRef.current.map((e) => `[${formatLogTimestamp(e.timestamp)}] ${e.text}`)
-      : ["(no events recorded yet in this session)"];
+    const lines = log.length
+      ? log.map((e) => `[${formatLogTimestamp(e.timestamp)}] ${e.text}`)
+      : ["(no events recorded yet in this scene)"];
     const body = lines.join("\n") + "\n";
     const stamp = formatLogTimestamp(Date.now()).replace(/[: ]/g, "-");
     const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
@@ -478,8 +493,7 @@ export function App() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const selectedParticipant = (): Participant | null => {
-    // Non-GM players always act as themselves; scene selection is irrelevant.
+  const selectedParticipant = (): Participant | null => {    // Non-GM players always act as themselves; scene selection is irrelevant.
     if (role !== "GM") {
       return (
         participants.find(
@@ -724,6 +738,37 @@ export function App() {
     }
   };
 
+  const goToNextRumble = async () => {
+    // Promote each declaration's first queued action; clear the rest.
+    void advanceDeclarationsToNextRumble();
+    await mutateCoreState((s) => ({
+      ...s,
+      phase: "plan",
+      rumbleNumber: (s.rumbleNumber === 3 ? 1 : s.rumbleNumber + 1) as 1 | 2 | 3,
+      roundNumber: s.rumbleNumber === 3 ? s.roundNumber + 1 : s.roundNumber,
+    }));
+  };
+
+  const goToPreviousRumble = async () => {
+    await mutateCoreState((s) => {
+      if (s.roundNumber <= 1 && s.rumbleNumber === 1) return s;
+      return {
+        ...s,
+        phase: "resolve",
+        rumbleNumber: (s.rumbleNumber === 1 ? 3 : s.rumbleNumber - 1) as 1 | 2 | 3,
+        roundNumber: s.rumbleNumber === 1 ? s.roundNumber - 1 : s.roundNumber,
+      };
+    });
+  };
+
+  // Back to the current rumble's planning phase: everyone keeps their action
+  // text (and queue) but is un-readied so it can be edited and re-submitted.
+  const returnToPlanning = async () => {
+    suppressUnreadyLogRef.current = true;
+    await revertDeclarationsToPlanning();
+    await mutateCoreState((s) => ({ ...s, phase: "plan" }));
+  };
+
   // Auto-advance to resolve when everyone is ready. GM-only to avoid race
   // conditions from multiple clients racing to flip the phase.
   const autoAdvancedRef = React.useRef(false);
@@ -746,9 +791,35 @@ export function App() {
     }
     if (sawNotAllReadyRef.current && !autoAdvancedRef.current) {
       autoAdvancedRef.current = true;
-      void advanceToResolve();
+      void advanceToResolve().then(() => {
+        appendLog("All participants ready — auto-advanced to the resolve phase.");
+        try {
+          void OBR.notification.show(
+            "All participants are ready — advancing to Resolve.",
+            "SUCCESS"
+          );
+        } catch (e) {
+          console.warn("Failed to show auto-advance notification:", e);
+        }
+      });
     }
   }, [participants, declarations, coreState.phase, role]);
+
+  // On any phase change, resync the local UI: collapse the GM bulk editor while
+  // resolving, and refill the player's action box from their declaration so a
+  // return to planning hands their text back for editing.
+  const prevPhaseRef = React.useRef(coreState.phase);
+  React.useEffect(() => {
+    if (prevPhaseRef.current === coreState.phase) return;
+    prevPhaseRef.current = coreState.phase;
+    setBulkCollapsed(coreState.phase === "resolve");
+    const mine = participants.find(
+      (p) => p.kind === "player" && p.ownerId === playerId
+    );
+    const text = mine ? declarations[mine.tokenId]?.text : undefined;
+    setDraftAction(text ?? "");
+    setDraftHistoryIdx(-1);
+  }, [coreState.phase, participants, declarations, playerId]);
 
   // Combat log: initialize snapshots once, then diff coreState and declarations
   // on every change and append entries. GM-only.
@@ -757,9 +828,6 @@ export function App() {
     if (coreSnapshotRef.current === null) {
       coreSnapshotRef.current = coreState;
       declSnapshotRef.current = declarations;
-      appendLog(
-        `Session opened at Rumble ${coreState.roundNumber}.${coreState.rumbleNumber} (phase: ${coreState.phase})`
-      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [obrReady, role]);
@@ -798,6 +866,7 @@ export function App() {
     if (!prev) return;
     const cur = declarations;
     const rumbleTag = `Rumble ${coreState.roundNumber}.${coreState.rumbleNumber}`;
+    const lines: string[] = [];
     for (const [participantId, decl] of Object.entries(cur)) {
       if (!decl.ready) continue;
       const before = prev[participantId];
@@ -814,9 +883,21 @@ export function App() {
       if (promotedFromQueue) action = "queued action activates";
       else if (wasReady) action = "updates action";
       else action = "submits action";
-      appendLog(`[${rumbleTag}] ${name} ${action}: "${decl.text}"`);
+      lines.push(`[${rumbleTag}] ${name} ${action}: "${decl.text}"`);
     }
+    for (const [participantId, before] of Object.entries(prev)) {
+      if (!before.ready) continue;
+      const now = cur[participantId];
+      if (now && !now.ready && now.text === before.text) {
+        if (suppressUnreadyLogRef.current) continue;
+        lines.push(
+          `[${rumbleTag}] ${resolveParticipantName(participantId)} un-readies`
+        );
+      }
+    }
+    suppressUnreadyLogRef.current = false;
     declSnapshotRef.current = cur;
+    if (lines.length) appendLog(...lines);
   }, [
     declarations,
     obrReady,
@@ -856,6 +937,33 @@ export function App() {
     !!target &&
     ((coreState.phase === "plan" && !!declarations[target.tokenId]?.ready) ||
       isResolvePhase);
+  const isReadied = !!(target && declarations[target.tokenId]?.ready);
+
+  // Shell-style history recall: Up walks back through this client's recent
+  // commands, Down walks forward and restores what was being typed.
+  const handleHistoryKeys = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    value: string,
+    setValue: (v: string) => void,
+    idx: number,
+    setIdx: (n: number) => void,
+    stashRef: React.MutableRefObject<string>
+  ) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    if (history.length === 0) return;
+    e.preventDefault();
+    if (e.key === "ArrowUp") {
+      if (idx === -1) stashRef.current = value;
+      const next = Math.min(idx + 1, history.length - 1);
+      setIdx(next);
+      setValue(history[next].text);
+    } else {
+      if (idx === -1) return;
+      const next = idx - 1;
+      setIdx(next);
+      setValue(next === -1 ? stashRef.current : history[next].text);
+    }
+  };
 
   return (
     <main className="layout">
@@ -884,18 +992,25 @@ export function App() {
               </button>
               <button
                 className="icon-button"
-                onClick={() =>
-                  mutateCoreState((s) => {
-                    // Promote each declaration's first queued action; clear the rest.
-                    void advanceDeclarationsToNextRumble();
-                    return {
-                      ...s,
-                      phase: "plan",
-                      rumbleNumber: (s.rumbleNumber === 3 ? 1 : s.rumbleNumber + 1) as 1 | 2 | 3,
-                      roundNumber: s.rumbleNumber === 3 ? s.roundNumber + 1 : s.roundNumber,
-                    };
-                  })
-                }
+                onClick={() => returnToPlanning()}
+                disabled={coreState.phase === "plan"}
+                title="Back to planning — un-ready everyone, keeping their action text and queues"
+                aria-label="Back to planning"
+              >
+                <span aria-hidden="true">📝</span>
+              </button>
+              <button
+                className="icon-button"
+                onClick={() => goToPreviousRumble()}
+                disabled={coreState.roundNumber <= 1 && coreState.rumbleNumber === 1}
+                title="Previous Rumble"
+                aria-label="Previous Rumble"
+              >
+                <span aria-hidden="true">⏪</span>
+              </button>
+              <button
+                className="icon-button"
+                onClick={() => goToNextRumble()}
                 title="Next Rumble"
                 aria-label="Next Rumble"
               >
@@ -910,17 +1025,62 @@ export function App() {
                 <span aria-hidden="true">🔄</span>
               </button>
               <button
-                className="icon-button"
-                onClick={downloadCombatLog}
-                title="Export combat log as .txt"
-                aria-label="Export combat log"
+                className={`icon-button ${logOpen ? "active" : ""}`}
+                onClick={() => setLogOpen((v) => !v)}
+                title="Show/hide the action log"
+                aria-label="Toggle action log"
+                aria-pressed={logOpen}
               >
-                <span aria-hidden="true">💾</span>
+                <span aria-hidden="true">📜</span>
               </button>
             </div>
           )}
         </div>
       </section>
+
+      {role === "GM" && logOpen && (
+        <section className="log-section">
+          <div className="log-header">
+            <h2>Action Log</h2>
+            <div className="log-controls">
+              <button
+                onClick={downloadCombatLog}
+                title="Export action log as .txt"
+              >
+                💾 Export
+              </button>
+              <button
+                onClick={() => {
+                  if (window.confirm("Clear the action log for this scene?")) {
+                    void clearLog();
+                  }
+                }}
+                disabled={log.length === 0}
+                title="Clear the action log for this scene"
+              >
+                🗑 Clear
+              </button>
+            </div>
+          </div>
+          {log.length === 0 ? (
+            <p className="muted">No events recorded in this scene yet.</p>
+          ) : (
+            <ol className="log-list">
+              {log
+                .slice()
+                .reverse()
+                .map((entry, idx) => (
+                  <li key={`${entry.timestamp}-${idx}`} className="log-entry">
+                    <span className="log-time">
+                      {formatLogTimestamp(entry.timestamp)}
+                    </span>
+                    <span className="log-text">{entry.text}</span>
+                  </li>
+                ))}
+            </ol>
+          )}
+        </section>
+      )}
 
       {role !== "GM" && target && canEditToken(target) && (
         <section className="editor-section">
@@ -933,7 +1093,21 @@ export function App() {
                 type="text"
                 placeholder={`What does ${target.name} do?`}
                 value={draftAction}
-                onChange={(e) => setDraftAction(e.target.value)}
+                onChange={(e) => {
+                  setDraftAction(e.target.value);
+                  setDraftHistoryIdx(-1);
+                }}
+                onKeyDown={(e) =>
+                  handleHistoryKeys(
+                    e,
+                    draftAction,
+                    setDraftAction,
+                    draftHistoryIdx,
+                    setDraftHistoryIdx,
+                    draftStashRef
+                  )
+                }
+                title="Press ↑ / ↓ to recall your recent actions"
               />
             </label>
             {target.delay !== undefined && (
@@ -977,8 +1151,17 @@ export function App() {
                 : undefined
             }
           >
-            {declarations[target.tokenId]?.ready ? "Update Ready" : "Ready"}
+            {isReadied ? "Update Ready" : "Ready"}
           </button>
+
+          {isReadied && !isResolvePhase && (
+            <button
+              onClick={() => setMyDeclaration(false)}
+              title="Un-ready — keeps your action text and your queue"
+            >
+              Un-ready
+            </button>
+          )}
 
           {canQueueNextAction && (
             <button
@@ -1071,8 +1254,25 @@ export function App() {
       )}
 
       {role === "GM" && (
-        <section className="bulk-actions-section">
-          <h2>Declare Actions (GM)</h2>
+        <section className={`bulk-actions-section ${bulkCollapsed ? "collapsed" : ""}`}>
+          <h2>
+            <button
+              type="button"
+              className="section-toggle"
+              onClick={() => setBulkCollapsed((v) => !v)}
+              aria-expanded={!bulkCollapsed}
+            >
+              <span aria-hidden="true">{bulkCollapsed ? "▸" : "▾"}</span>
+              Declare Actions (GM)
+              {bulkCollapsed && (
+                <span className="muted section-hint">
+                  {isResolvePhase ? " — minimized during resolve" : " — minimized"}
+                </span>
+              )}
+            </button>
+          </h2>
+          {!bulkCollapsed && (
+            <>
           <div className="bulk-token-list">
             <label className="bulk-label">Select tokens:</label>
             {(() => {
@@ -1143,7 +1343,21 @@ export function App() {
               type="text"
               placeholder="Apply to selected tokens"
               value={bulkActionText}
-              onChange={(e) => setBulkActionText(e.target.value)}
+              onChange={(e) => {
+                setBulkActionText(e.target.value);
+                setBulkHistoryIdx(-1);
+              }}
+              onKeyDown={(e) =>
+                handleHistoryKeys(
+                  e,
+                  bulkActionText,
+                  setBulkActionText,
+                  bulkHistoryIdx,
+                  setBulkHistoryIdx,
+                  bulkStashRef
+                )
+              }
+              title="Press ↑ / ↓ to recall your recent actions"
             />
           </label>
 
@@ -1171,6 +1385,8 @@ export function App() {
           >
             Apply to {bulkSelection.length} Token{bulkSelection.length !== 1 ? "s" : ""}
           </button>
+            </>
+          )}
         </section>
       )}
 

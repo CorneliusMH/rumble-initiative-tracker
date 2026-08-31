@@ -7,9 +7,13 @@ export const DECL_PREFIX = `${NAMESPACE}/decl/`;
 export const PLAYER_INIT_PREFIX = `${NAMESPACE}/player/`;
 export const PLAYER_PARTICIPANT_PREFIX = "player:";
 export const ITEM_META_KEY = `${NAMESPACE}/initiative`;
+export const LOG_KEY = `${NAMESPACE}/log`;
 const HISTORY_KEY = `${NAMESPACE}/quick-history`;
 
 const MAX_DECL_TEXT = 240;
+const MAX_LOG_TEXT = 400;
+// Scene metadata has a size budget; keep the log bounded.
+const MAX_LOG_ENTRIES = 250;
 
 const DEFAULT_CORE: CoreState = {
   roundNumber: 1,
@@ -145,6 +149,65 @@ export function advanceDeclarationsToNextRumble(): Promise<void> {
       };
     }
     if (Object.keys(update).length) await OBR.scene.setMetadata(update);
+  });
+}
+
+// Revert the current rumble to its planning phase: keep every declaration's
+// text (so players can edit it) and its queue, but clear ready/revealed.
+export function revertDeclarationsToPlanning(): Promise<void> {
+  return enqueue(async () => {
+    const metadata = await OBR.scene.getMetadata();
+    const update: Record<string, Declaration> = {};
+    for (const [key, value] of Object.entries(metadata)) {
+      if (!key.startsWith(DECL_PREFIX)) continue;
+      const decl = sanitizeDeclaration(value);
+      if (!decl) continue;
+      update[key] = { ...decl, ready: false, revealed: false };
+    }
+    if (Object.keys(update).length) await OBR.scene.setMetadata(update);
+  });
+}
+
+export interface LogEntry {
+  timestamp: number;
+  text: string;
+}
+
+export function readLog(metadata: Record<string, unknown>): LogEntry[] {
+  const raw = metadata[LOG_KEY];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry): LogEntry | null => {
+      if (!entry || typeof entry !== "object") return null;
+      const e = entry as Partial<LogEntry>;
+      if (typeof e.text !== "string") return null;
+      return {
+        text: e.text.slice(0, MAX_LOG_TEXT),
+        timestamp: Number.isFinite(e.timestamp) ? Number(e.timestamp) : Date.now(),
+      };
+    })
+    .filter((e): e is LogEntry => e !== null)
+    .slice(-MAX_LOG_ENTRIES);
+}
+
+export function appendLogEntries(texts: string[]): Promise<void> {
+  const clean = texts.map((t) => t.trim()).filter(Boolean);
+  if (clean.length === 0) return Promise.resolve();
+  return enqueue(async () => {
+    const metadata = await OBR.scene.getMetadata();
+    const current = readLog(metadata as Record<string, unknown>);
+    const now = Date.now();
+    const next = [
+      ...current,
+      ...clean.map((text) => ({ timestamp: now, text: text.slice(0, MAX_LOG_TEXT) })),
+    ].slice(-MAX_LOG_ENTRIES);
+    await OBR.scene.setMetadata({ [LOG_KEY]: next });
+  });
+}
+
+export function clearLog(): Promise<void> {
+  return enqueue(async () => {
+    await OBR.scene.setMetadata({ [LOG_KEY]: [] });
   });
 }
 
