@@ -1,0 +1,18 @@
+Settings page:
+- Make a settings tab/page
+- Add a setting to switch between 3 rumbles per round and 1 plan/resolve cycle per round
+- Move the "reset rounds" to the settings page
+- Add a setting for a user to be able to 
+
+Recent Commands changes:
+- Add a way for a user to remove individual recent commands from their history
+- Add a way for a user to pin certain commands to their history so they stay at the top of the list
+- Add a way for a user to minimize the recent history tiles
+
+Initiative List changes:
+- Move the initiative number to the left of the name of the folks in the initiative list.
+
+Log File:
+- Move the log display and download to the bottom of the settings page
+- Log how many actions each user has queued up when the round shifts from plan to resolve
+- The log file sometimes doesn't populate except for one line per rumble where everyone's submitted a plan and it auto-switches-over to resolve. Fix that, if you can.
