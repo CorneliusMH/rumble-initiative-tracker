@@ -4,12 +4,12 @@ Settings page:
 - Move the "reset rounds" to the settings page
 - Add a setting for a user to be able to 
 
-Recent Commands changes:
+Recent Commands:
 - Add a way for a user to remove individual recent commands from their history
 - Add a way for a user to pin certain commands to their history so they stay at the top of the list
 - Add a way for a user to minimize the recent history tiles
 
-Initiative List changes:
+Initiative List:
 - Move the initiative number to the left of the name of the folks in the initiative list.
 
 Log File:
