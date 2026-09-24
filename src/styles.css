@@ -184,7 +184,7 @@ button:disabled {
 
 .entry {
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: auto 1fr auto auto;
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
@@ -203,6 +203,7 @@ button:disabled {
 
 .name {
   font-weight: 500;
+  grid-column: 2;
 }
 
 .init {
@@ -210,6 +211,7 @@ button:disabled {
   color: var(--text-secondary);
   min-width: 30px;
   text-align: right;
+  grid-column: 1;
 }
 
 .action {
@@ -217,6 +219,7 @@ button:disabled {
   color: var(--color-action);
   text-align: right;
   min-width: 100px;
+  grid-column: 3;
 }
 
 .remove-token {
@@ -230,6 +233,7 @@ button:disabled {
   border-radius: 3px;
   cursor: pointer;
   transition: all 0.2s;
+  grid-column: 4;
 }
 
 .remove-token:hover {
@@ -370,11 +374,10 @@ button:disabled {
   background: var(--bg-primary);
   border: 1px solid var(--color-action);
   border-radius: 4px;
-  padding: 5px 10px;
+  padding: 0;
   font-size: 0.8rem;
   line-height: 1.2;
   color: var(--text-primary);
-  cursor: pointer;
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -385,6 +388,45 @@ button:disabled {
 .history-chip:hover {
   background: var(--color-action);
   color: var(--bg-primary);
+}
+.history-section {
+  margin: 8px 0;
+}
+.history-toggle {
+  width: auto;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.history-fill,
+.history-pin,
+.history-remove {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  min-height: 26px;
+}
+.history-fill {
+  padding: 5px 8px;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-pin,
+.history-remove {
+  padding: 4px 6px;
+  font-size: 0.75rem;
+}
+.history-pin:hover,
+.history-remove:hover,
+.history-fill:hover {
+  background: var(--color-action);
+  color: var(--bg-primary);
+}
+.history-pin.pinned {
+  color: var(--color-action);
 }
 .history-text {
   overflow: hidden;
@@ -549,6 +591,39 @@ button:disabled {
   word-break: break-word;
 }
 
+.settings-section {
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--bg-primary);
+}
+
+.settings-section h2 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.settings-options {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.settings-options input[type="radio"] {
+  width: auto;
+  margin: 0;
+}
+
+.settings-log-section {
+  margin-top: auto;
+  max-height: 320px;
+}
+
 /* Collapsible section header */
 .section-toggle {
   display: flex;
@@ -709,7 +784,7 @@ button:disabled {
 
 @media (max-width: 520px) {
   .entry {
-    grid-template-columns: 1fr auto auto auto;
+    grid-template-columns: auto 1fr auto auto;
     gap: 8px;
   }
 

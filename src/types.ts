@@ -30,5 +30,6 @@ export interface Declaration {
 export interface CoreState {
   roundNumber: number;
   rumbleNumber: 1 | 2 | 3;
+  rumblesPerRound: 1 | 3;
   phase: Phase;
 }

@@ -9,15 +9,18 @@ export const PLAYER_PARTICIPANT_PREFIX = "player:";
 export const ITEM_META_KEY = `${NAMESPACE}/initiative`;
 export const LOG_KEY = `${NAMESPACE}/log`;
 const HISTORY_KEY = `${NAMESPACE}/quick-history`;
+const LOCAL_QUEUE_PREFIX = `${NAMESPACE}/local-queue/`;
+const LOCAL_LOG_PREFIX = `${NAMESPACE}/local-log/`;
 
 const MAX_DECL_TEXT = 240;
 const MAX_LOG_TEXT = 400;
-// Scene metadata has a size budget; keep the log bounded.
+// Keep migrated and local logs bounded.
 const MAX_LOG_ENTRIES = 250;
 
 const DEFAULT_CORE: CoreState = {
   roundNumber: 1,
   rumbleNumber: 1,
+  rumblesPerRound: 3,
   phase: "plan"
 };
 
@@ -36,6 +39,7 @@ export function sanitizeCore(input: unknown): CoreState {
       state.rumbleNumber === 1 || state.rumbleNumber === 2 || state.rumbleNumber === 3
         ? state.rumbleNumber
         : 1,
+    rumblesPerRound: state.rumblesPerRound === 1 ? 1 : 3,
     phase: rawPhase === "resolve" || rawPhase === "reveal" ? "resolve" : "plan"
   };
 }
@@ -119,6 +123,26 @@ export function clearAllDeclarations(): Promise<void> {
   });
 }
 
+export function advanceDeclarationsToResolve(): Promise<void> {
+  return enqueue(async () => {
+    const metadata = await OBR.scene.getMetadata();
+    const current = sanitizeCore(metadata[CORE_KEY]);
+    if (current.phase === "resolve") return;
+
+    const update: Record<string, unknown> = {
+      [CORE_KEY]: { ...current, phase: "resolve" },
+    };
+    for (const [key, value] of Object.entries(metadata)) {
+      if (!key.startsWith(DECL_PREFIX)) continue;
+      const declaration = sanitizeDeclaration(value);
+      if (declaration && !declaration.revealed) {
+        update[key] = { ...declaration, revealed: true };
+      }
+    }
+    await OBR.scene.setMetadata(update);
+  });
+}
+
 // Advance all declarations to the next rumble: pop each queue's first entry into
 // the active declaration (auto-ready) and shift the queue; declarations without
 // a queued action are cleared. Runs as a single atomic setMetadata call.
@@ -190,25 +214,79 @@ export function readLog(metadata: Record<string, unknown>): LogEntry[] {
     .slice(-MAX_LOG_ENTRIES);
 }
 
-export function appendLogEntries(texts: string[]): Promise<void> {
-  const clean = texts.map((t) => t.trim()).filter(Boolean);
-  if (clean.length === 0) return Promise.resolve();
-  return enqueue(async () => {
-    const metadata = await OBR.scene.getMetadata();
-    const current = readLog(metadata as Record<string, unknown>);
-    const now = Date.now();
-    const next = [
-      ...current,
-      ...clean.map((text) => ({ timestamp: now, text: text.slice(0, MAX_LOG_TEXT) })),
-    ].slice(-MAX_LOG_ENTRIES);
-    await OBR.scene.setMetadata({ [LOG_KEY]: next });
+function localStorageKey(prefix: string, scope: string, id = ""): string {
+  return `${prefix}${encodeURIComponent(scope)}${id ? `/${encodeURIComponent(id)}` : ""}`;
+}
+
+function readLocalJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function getLocalQueuedActions(scope: string, participantId: string): QueuedAction[] {
+  const raw = readLocalJson<unknown[]>(localStorageKey(LOCAL_QUEUE_PREFIX, scope, participantId), []);
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => {
+      const value = entry as Partial<QueuedAction>;
+      return {
+        text: typeof value.text === "string" ? value.text.slice(0, MAX_DECL_TEXT) : "",
+        timestamp: Number.isFinite(value.timestamp) ? Number(value.timestamp) : Date.now(),
+      };
+    })
+    .filter((entry) => entry.text.length > 0)
+    .slice(0, 2);
+}
+
+export function setLocalQueuedActions(
+  scope: string,
+  participantId: string,
+  actions: QueuedAction[]
+): QueuedAction[] {
+  const next = actions.slice(0, 2);
+  const key = localStorageKey(LOCAL_QUEUE_PREFIX, scope, participantId);
+  if (next.length > 0) localStorage.setItem(key, JSON.stringify(next));
+  else localStorage.removeItem(key);
+  return next;
+}
+
+export function getLocalLog(scope: string): LogEntry[] {
+  return readLog({
+    [LOG_KEY]: readLocalJson<unknown[]>(localStorageKey(LOCAL_LOG_PREFIX, scope), []),
   });
 }
 
-export function clearLog(): Promise<void> {
-  return enqueue(async () => {
-    await OBR.scene.setMetadata({ [LOG_KEY]: [] });
-  });
+export function appendLocalLogEntries(scope: string, texts: string[]): LogEntry[] {
+  const clean = texts.map((text) => text.trim()).filter(Boolean);
+  if (clean.length === 0) return getLocalLog(scope);
+  const current = getLocalLog(scope);
+  const now = Date.now();
+  const next = [
+    ...current,
+    ...clean.map((text) => ({ timestamp: now, text: text.slice(0, MAX_LOG_TEXT) })),
+  ].slice(-MAX_LOG_ENTRIES);
+  localStorage.setItem(localStorageKey(LOCAL_LOG_PREFIX, scope), JSON.stringify(next));
+  return next;
+}
+
+export function clearLocalLog(scope: string): LogEntry[] {
+  localStorage.removeItem(localStorageKey(LOCAL_LOG_PREFIX, scope));
+  return [];
+}
+
+export function migrateSceneLogToLocal(scope: string, metadata: Record<string, unknown>): LogEntry[] {
+  const legacy = readLog(metadata);
+  const current = getLocalLog(scope);
+  const next = [...current, ...legacy].slice(-MAX_LOG_ENTRIES);
+  if (next.length > 0) {
+    localStorage.setItem(localStorageKey(LOCAL_LOG_PREFIX, scope), JSON.stringify(next));
+  }
+  return next;
 }
 
 export interface PlayerInitiativeData {
@@ -254,6 +332,7 @@ export function onMetadataChange(
 
 export interface QuickHistoryEntry {
   text: string;
+  pinned?: boolean;
 }
 
 export function getQuickHistory(): QuickHistoryEntry[] {
@@ -267,11 +346,12 @@ export function getQuickHistory(): QuickHistoryEntry[] {
       .map((entry): QuickHistoryEntry | null => {
         if (typeof entry === "string") return { text: entry };
         if (entry && typeof entry === "object" && typeof entry.text === "string") {
-          return { text: entry.text };
+          return { text: entry.text, pinned: Boolean(entry.pinned) };
         }
         return null;
       })
       .filter((e): e is QuickHistoryEntry => e !== null)
+      .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)))
       .slice(0, 10);
   } catch {
     return [];
@@ -282,10 +362,29 @@ export function pushQuickHistory(text: string): QuickHistoryEntry[] {
   const trimmed = text.trim();
   if (!trimmed) return getQuickHistory();
   const current = getQuickHistory();
+  const existing = current.find((entry) => entry.text === trimmed);
   const merged: QuickHistoryEntry[] = [
-    { text: trimmed },
+    { text: trimmed, pinned: existing?.pinned },
     ...current.filter((entry) => entry.text !== trimmed),
-  ].slice(0, 10);
+  ]
+    .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)))
+    .slice(0, 10);
   localStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
   return merged;
+}
+
+export function removeQuickHistory(text: string): QuickHistoryEntry[] {
+  const next = getQuickHistory().filter((entry) => entry.text !== text);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+  return next;
+}
+
+export function toggleQuickHistoryPin(text: string): QuickHistoryEntry[] {
+  const next = getQuickHistory()
+    .map((entry) =>
+      entry.text === text ? { ...entry, pinned: !entry.pinned } : entry
+    )
+    .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)));
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+  return next;
 }

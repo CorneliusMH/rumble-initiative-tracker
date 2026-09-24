@@ -3,22 +3,29 @@ import OBR, { Item, Player } from "@owlbear-rodeo/sdk";
 import {
   CORE_KEY,
   ITEM_META_KEY,
+  LOG_KEY,
+  advanceDeclarationsToResolve,
   PLAYER_PARTICIPANT_PREFIX,
   advanceDeclarationsToNextRumble,
-  appendLogEntries,
-  clearLog,
+  appendLocalLogEntries,
+  clearLocalLog,
   getDefaultCore,
+  getLocalLog,
+  getLocalQueuedActions,
   getQuickHistory,
+  migrateSceneLogToLocal,
   mutateCoreState,
   onMetadataChange,
   pushQuickHistory,
   readDeclarations,
-  readLog,
   readPlayerInits,
   revertDeclarationsToPlanning,
+  removeQuickHistory,
   sanitizeCore,
   setDeclaration,
+  setLocalQueuedActions,
   setPlayerInit,
+  toggleQuickHistoryPin,
 } from "./state";
 import type { CoreState, Declaration, Participant, QueuedAction } from "./types";
 import type { LogEntry, PlayerInitiativeData, QuickHistoryEntry } from "./state";
@@ -52,8 +59,10 @@ export function App() {
   const [editingQueueIdx, setEditingQueueIdx] = useState<number | null>(null);
   const [editingQueueValue, setEditingQueueValue] = useState("");
   const [log, setLog] = useState<LogEntry[]>([]);
-  const [logOpen, setLogOpen] = useState(false);
   const [bulkCollapsed, setBulkCollapsed] = useState(false);
+  const [activeView, setActiveView] = useState<"tracker" | "settings">("tracker");
+  const [historyCollapsed, setHistoryCollapsed] = useState(false);
+  const localStorageScopeRef = React.useRef("");
   const roleRef = React.useRef<"GM" | "PLAYER">("PLAYER");
   const initializingRef = React.useRef(true);
 
@@ -97,6 +106,8 @@ export function App() {
       try {
         await OBR.onReady(async () => {
           try {
+            localStorageScopeRef.current = OBR.room.id;
+
             // 0. Initialize theme first
             try {
               const t = await OBR.theme.getTheme();
@@ -164,7 +175,11 @@ export function App() {
                       setCoreState(sanitizeCore(m[CORE_KEY]));
                       setDeclarations(readDeclarations(m));
                       setPlayerInits(readPlayerInits(m));
-                      setLog(readLog(m));
+                      const migratedLog = migrateSceneLogToLocal(localStorageScopeRef.current, m);
+                      setLog(migratedLog);
+                      if (m[LOG_KEY] !== undefined) {
+                        await OBR.scene.setMetadata({ [LOG_KEY]: null });
+                      }
                     } else {
                       // No active scene — clear everything so a stale order
                       // doesn't linger until a new scene loads.
@@ -212,7 +227,7 @@ export function App() {
                     setCoreState(sanitizeCore(metadata[CORE_KEY]));
                     setDeclarations(readDeclarations(metadata));
                     setPlayerInits(readPlayerInits(metadata));
-                    setLog(readLog(metadata));
+                    setLog(getLocalLog(localStorageScopeRef.current));
                   } catch (e) {
                     console.warn("Error in metadata onChange:", e);
                   }
@@ -257,7 +272,11 @@ export function App() {
                 setCoreState(sanitizeCore(m[CORE_KEY]));
                 setDeclarations(readDeclarations(m));
                 setPlayerInits(readPlayerInits(m));
-                setLog(readLog(m));
+                const migratedLog = migrateSceneLogToLocal(localStorageScopeRef.current, m);
+                setLog(migratedLog);
+                if (m[LOG_KEY] !== undefined) {
+                  await OBR.scene.setMetadata({ [LOG_KEY]: null });
+                }
               } catch (e) {
                 console.warn("Failed to load initial scene state:", e);
               }
@@ -471,9 +490,11 @@ export function App() {
   };
 
   const appendLog = React.useCallback((...texts: string[]) => {
-    void appendLogEntries(texts).catch((e) =>
-      console.warn("Failed to write combat log:", e)
-    );
+    try {
+      setLog(appendLocalLogEntries(localStorageScopeRef.current, texts));
+    } catch (e) {
+      console.warn("Failed to write combat log:", e);
+    }
   }, []);
 
   const downloadCombatLog = () => {
@@ -626,12 +647,48 @@ export function App() {
     }
   };
 
+  const usesLocalQueue = (tokenId: string): boolean => {
+    const participant = participants.find((item) => item.tokenId === tokenId);
+    return participant?.kind === "player" && participant.ownerId === playerId;
+  };
+
+  const getQueueForParticipant = (tokenId: string): QueuedAction[] => {
+    const sharedQueue = declarations[tokenId]?.queue ?? [];
+    if (!usesLocalQueue(tokenId)) return sharedQueue;
+    return [...sharedQueue, ...getLocalQueuedActions(localStorageScopeRef.current, tokenId)];
+  };
+
+  const saveQueueForParticipant = async (
+    tokenId: string,
+    queue: QueuedAction[]
+  ) => {
+    const existing = declarations[tokenId];
+    if (!existing) return;
+    if (!usesLocalQueue(tokenId)) {
+      await setDeclaration(tokenId, {
+        ...existing,
+        queue: queue.length > 0 ? queue.slice(0, 3) : undefined,
+      });
+      return;
+    }
+
+    const sharedQueue = queue.slice(0, 1);
+    setLocalQueuedActions(
+      localStorageScopeRef.current,
+      tokenId,
+      queue.slice(1, 3)
+    );
+    await setDeclaration(tokenId, {
+      ...existing,
+      queue: sharedQueue.length > 0 ? sharedQueue : undefined,
+    });
+  };
+
   const queueActionForNextRumble = async (text: string) => {
     const target = selectedParticipant();
     if (!target) return;
 
-    const existing = declarations[target.tokenId];
-    const queue = existing?.queue ?? [];
+    const queue = getQueueForParticipant(target.tokenId);
 
     if (queue.length >= 3) return;
 
@@ -640,15 +697,7 @@ export function App() {
       timestamp: Date.now(),
     });
 
-    const next: Declaration = {
-      text: existing?.text ?? "",
-      ready: existing?.ready ?? false,
-      revealed: existing?.revealed ?? coreState.phase !== "plan",
-      timestamp: existing?.timestamp ?? Date.now(),
-      ownerId: playerId,
-      queue: queue.length > 0 ? queue : undefined,
-    };
-    await setDeclaration(target.tokenId, next);
+    await saveQueueForParticipant(target.tokenId, queue);
     const queuedText = text.trim();
     if (queuedText) {
       try {
@@ -664,13 +713,8 @@ export function App() {
     transform: (queue: QueuedAction[]) => QueuedAction[]
   ) => {
     const existing = declarations[tokenId];
-    if (!existing?.queue) return;
-    const nextQueue = transform([...existing.queue]);
-    const next: Declaration = {
-      ...existing,
-      queue: nextQueue.length > 0 ? nextQueue : undefined,
-    };
-    await setDeclaration(tokenId, next);
+    if (!existing) return;
+    await saveQueueForParticipant(tokenId, transform(getQueueForParticipant(tokenId)));
   };
 
   const updateQueueEntry = async (tokenId: string, idx: number, text: string) => {
@@ -729,23 +773,34 @@ export function App() {
   };
 
   const advanceToResolve = async () => {
-    await mutateCoreState((state) => {
-      state.phase = "resolve";
-      return state;
-    });
-    for (const [tokenId, decl] of Object.entries(declarations)) {
-      if (!decl.revealed) await setDeclaration(tokenId, { ...decl, revealed: true });
-    }
+    if (coreState.phase === "resolve") return;
+    const rumbleTag = `Rumble ${coreState.roundNumber}.${coreState.rumbleNumber}`;
+    const queueLogEntries = participants
+      .map((participant) => {
+        const count = declarations[participant.tokenId]?.queue?.length ?? 0;
+        return count > 0
+          ? `[${rumbleTag}] ${participant.name} has ${count} queued action${count === 1 ? "" : "s"}`
+          : null;
+      })
+      .filter((entry): entry is string => entry !== null);
+    await advanceDeclarationsToResolve();
+    if (queueLogEntries.length > 0) appendLog(...queueLogEntries);
   };
 
   const goToNextRumble = async () => {
     // Promote each declaration's first queued action; clear the rest.
-    void advanceDeclarationsToNextRumble();
+    await advanceDeclarationsToNextRumble();
     await mutateCoreState((s) => ({
       ...s,
       phase: "plan",
-      rumbleNumber: (s.rumbleNumber === 3 ? 1 : s.rumbleNumber + 1) as 1 | 2 | 3,
-      roundNumber: s.rumbleNumber === 3 ? s.roundNumber + 1 : s.roundNumber,
+      rumbleNumber:
+        s.rumblesPerRound === 1 || s.rumbleNumber === s.rumblesPerRound
+          ? 1
+          : (s.rumbleNumber + 1) as 1 | 2 | 3,
+      roundNumber:
+        s.rumblesPerRound === 1 || s.rumbleNumber === s.rumblesPerRound
+          ? s.roundNumber + 1
+          : s.roundNumber,
     }));
   };
 
@@ -755,8 +810,16 @@ export function App() {
       return {
         ...s,
         phase: "resolve",
-        rumbleNumber: (s.rumbleNumber === 1 ? 3 : s.rumbleNumber - 1) as 1 | 2 | 3,
-        roundNumber: s.rumbleNumber === 1 ? s.roundNumber - 1 : s.roundNumber,
+        rumbleNumber:
+          s.rumblesPerRound === 1 || s.rumbleNumber === 1
+            ? s.rumblesPerRound === 1
+              ? 1
+              : s.rumblesPerRound
+            : (s.rumbleNumber - 1) as 1 | 2 | 3,
+        roundNumber:
+          s.rumblesPerRound === 1 || s.rumbleNumber === 1
+            ? s.roundNumber - 1
+            : s.roundNumber,
       };
     });
   };
@@ -811,8 +874,13 @@ export function App() {
   const prevPhaseRef = React.useRef(coreState.phase);
   React.useEffect(() => {
     if (prevPhaseRef.current === coreState.phase) return;
+    const previousPhase = prevPhaseRef.current;
     prevPhaseRef.current = coreState.phase;
     setBulkCollapsed(coreState.phase === "resolve");
+    if (previousPhase === "resolve" && coreState.phase === "plan") {
+      setDraftHistoryIdx(-1);
+      return;
+    }
     const mine = participants.find(
       (p) => p.kind === "player" && p.ownerId === playerId
     );
@@ -820,6 +888,31 @@ export function App() {
     setDraftAction(text ?? "");
     setDraftHistoryIdx(-1);
   }, [coreState.phase, participants, declarations, playerId]);
+
+  React.useEffect(() => {
+    if (!obrReady || !playerId) return;
+    const syncLocalQueues = async () => {
+      for (const participant of participants) {
+        if (participant.kind !== "player" || participant.ownerId !== playerId) continue;
+        const declaration = declarations[participant.tokenId];
+        if (!declaration) continue;
+        const sharedQueue = declaration.queue ?? [];
+        const localQueue = getLocalQueuedActions(
+          localStorageScopeRef.current,
+          participant.tokenId
+        );
+        if (sharedQueue.length > 1) {
+          await saveQueueForParticipant(participant.tokenId, [
+            ...sharedQueue,
+            ...localQueue,
+          ]);
+        } else if (sharedQueue.length === 0 && localQueue.length > 0) {
+          await saveQueueForParticipant(participant.tokenId, localQueue);
+        }
+      }
+    };
+    void syncLocalQueues();
+  }, [obrReady, playerId, participants, declarations, coreState.roundNumber, coreState.rumbleNumber]);
 
   // Combat log: initialize snapshots once, then diff coreState and declarations
   // on every change and append entries. GM-only.
@@ -931,6 +1024,7 @@ export function App() {
   }
 
   const target = selectedParticipant();
+  const targetQueue = target ? getQueueForParticipant(target.tokenId) : [];
   const ready = participants.filter((p) => declarations[p.tokenId]?.ready).length;
   const isResolvePhase = coreState.phase === "resolve";
   const canQueueNextAction =
@@ -965,16 +1059,178 @@ export function App() {
     }
   };
 
+  const removeHistory = (text: string) => {
+    setHistory(removeQuickHistory(text));
+  };
+
+  const toggleHistoryPin = (text: string) => {
+    setHistory(toggleQuickHistoryPin(text));
+  };
+
+  const recentHistoryControls = (
+    fill: (text: string) => void,
+    label: string
+  ) => (
+    <div className="history-section">
+      <button
+        type="button"
+        className="section-toggle history-toggle"
+        onClick={() => setHistoryCollapsed((value) => !value)}
+        aria-expanded={!historyCollapsed}
+      >
+        <span aria-hidden="true">{historyCollapsed ? "▸" : "▾"}</span>
+        {label}
+      </button>
+      {!historyCollapsed && (
+        <div className="history-list">
+          {history.map((entry, idx) => (
+            <div className="history-chip" key={`${entry.text}::${idx}`}>
+              <button
+                type="button"
+                className="history-fill"
+                title={`Fill "${entry.text}" — does not ready`}
+                onClick={() => fill(entry.text)}
+              >
+                <span className="history-text">{entry.text}</span>
+              </button>
+              <button
+                type="button"
+                className={`history-pin ${entry.pinned ? "pinned" : ""}`}
+                title={entry.pinned ? "Unpin command" : "Pin command"}
+                aria-label={entry.pinned ? "Unpin command" : "Pin command"}
+                onClick={() => toggleHistoryPin(entry.text)}
+              >
+                {entry.pinned ? "📌" : "📍"}
+              </button>
+              <button
+                type="button"
+                className="history-remove"
+                title="Remove command from history"
+                aria-label="Remove command from history"
+                onClick={() => removeHistory(entry.text)}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  if (activeView === "settings") {
+    return (
+      <main className="layout settings-view">
+        <section className="header-section">
+          <div className="header-top">
+            <span className="status-text">Settings</span>
+            <button
+              className="icon-button"
+              onClick={() => setActiveView("tracker")}
+              title="Return to tracker"
+              aria-label="Return to tracker"
+            >
+              ←
+            </button>
+          </div>
+        </section>
+        <section className="settings-section">
+          <h2>Round Mode</h2>
+          <p className="muted">Choose how many plan/resolve cycles make up a round.</p>
+          {role === "GM" ? (
+            <div className="settings-options">
+              <label>
+                <input
+                  type="radio"
+                  name="rumbles-per-round"
+                  checked={coreState.rumblesPerRound === 3}
+                  onChange={() => mutateCoreState((state) => ({ ...state, rumblesPerRound: 3 }))}
+                />
+                3 rumbles per round
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="rumbles-per-round"
+                  checked={coreState.rumblesPerRound === 1}
+                  onChange={() => mutateCoreState((state) => ({
+                    ...state,
+                    rumblesPerRound: 1,
+                    rumbleNumber: 1,
+                  }))}
+                />
+                1 plan/resolve cycle per round
+              </label>
+            </div>
+          ) : (
+            <p>{coreState.rumblesPerRound === 3 ? "3 rumbles per round" : "1 plan/resolve cycle per round"}</p>
+          )}
+        </section>
+        {role === "GM" && (
+          <section className="settings-section">
+            <h2>Round Controls</h2>
+            <button
+              onClick={() => {
+                if (window.confirm("Reset the round and rumble counter?")) {
+                  void mutateCoreState(() => getDefaultCore());
+                }
+              }}
+            >
+              Reset rounds
+            </button>
+          </section>
+        )}
+        {role === "GM" && (
+          <section className="log-section settings-log-section">
+            <div className="log-header">
+              <h2>Action Log</h2>
+              <div className="log-controls">
+                <button onClick={downloadCombatLog} title="Export action log as .txt">
+                  💾 Export
+                </button>
+                <button
+                  onClick={() => {
+                    if (window.confirm("Clear the action log for this scene?")) {
+                      setLog(clearLocalLog(localStorageScopeRef.current));
+                    }
+                  }}
+                  disabled={log.length === 0}
+                  title="Clear the action log for this scene"
+                >
+                  🗑 Clear
+                </button>
+              </div>
+            </div>
+            {log.length === 0 ? (
+              <p className="muted">No events recorded in this scene yet.</p>
+            ) : (
+              <ol className="log-list">
+                {log.slice().reverse().map((entry, idx) => (
+                  <li key={`${entry.timestamp}-${idx}`} className="log-entry">
+                    <span className="log-time">{formatLogTimestamp(entry.timestamp)}</span>
+                    <span className="log-text">{entry.text}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        )}
+      </main>
+    );
+  }
+
   return (
     <main className="layout">
       <section className="header-section">
         <div className="header-top">
           <span className="status-text">
-            Rumble {coreState.roundNumber}.{coreState.rumbleNumber}
-            {coreState.rumbleNumber === 1 && (
+            {coreState.rumblesPerRound === 1
+              ? `Round ${coreState.roundNumber}`
+              : `Rumble ${coreState.roundNumber}.${coreState.rumbleNumber}`}
+            {coreState.rumblesPerRound === 3 && coreState.rumbleNumber === 1 && (
               <span className="round-marker"> (round start)</span>
             )}
-            {coreState.rumbleNumber === 3 && (
+            {coreState.rumblesPerRound === 3 && coreState.rumbleNumber === 3 && (
               <span className="round-marker"> (round end)</span>
             )}
             {" | "}{coreState.phase} | Ready: {ready}/{participants.length}
@@ -1018,69 +1274,16 @@ export function App() {
               </button>
               <button
                 className="icon-button"
-                onClick={() => mutateCoreState(() => getDefaultCore())}
-                title="Reset to Rumble 1.1"
-                aria-label="Reset to Rumble 1.1"
+                onClick={() => setActiveView("settings")}
+                title="Open settings"
+                aria-label="Open settings"
               >
-                <span aria-hidden="true">🔄</span>
-              </button>
-              <button
-                className={`icon-button ${logOpen ? "active" : ""}`}
-                onClick={() => setLogOpen((v) => !v)}
-                title="Show/hide the action log"
-                aria-label="Toggle action log"
-                aria-pressed={logOpen}
-              >
-                <span aria-hidden="true">📜</span>
+                <span aria-hidden="true">⚙</span>
               </button>
             </div>
           )}
         </div>
       </section>
-
-      {role === "GM" && logOpen && (
-        <section className="log-section">
-          <div className="log-header">
-            <h2>Action Log</h2>
-            <div className="log-controls">
-              <button
-                onClick={downloadCombatLog}
-                title="Export action log as .txt"
-              >
-                💾 Export
-              </button>
-              <button
-                onClick={() => {
-                  if (window.confirm("Clear the action log for this scene?")) {
-                    void clearLog();
-                  }
-                }}
-                disabled={log.length === 0}
-                title="Clear the action log for this scene"
-              >
-                🗑 Clear
-              </button>
-            </div>
-          </div>
-          {log.length === 0 ? (
-            <p className="muted">No events recorded in this scene yet.</p>
-          ) : (
-            <ol className="log-list">
-              {log
-                .slice()
-                .reverse()
-                .map((entry, idx) => (
-                  <li key={`${entry.timestamp}-${idx}`} className="log-entry">
-                    <span className="log-time">
-                      {formatLogTimestamp(entry.timestamp)}
-                    </span>
-                    <span className="log-text">{entry.text}</span>
-                  </li>
-                ))}
-            </ol>
-          )}
-        </section>
-      )}
 
       {role !== "GM" && target && canEditToken(target) && (
         <section className="editor-section">
@@ -1125,20 +1328,7 @@ export function App() {
           </div>
 
           {history.length > 0 && (
-            <div className="history-list">
-              <span className="history-label">Recent:</span>
-              {history.slice(0, 10).map((entry, idx) => (
-                <button
-                  key={`${entry.text}::${idx}`}
-                  type="button"
-                  className="history-chip"
-                  title={`Fill "${entry.text}" — does not ready`}
-                  onClick={() => setDraftAction(entry.text)}
-                >
-                  <span className="history-text">{entry.text}</span>
-                </button>
-              ))}
-            </div>
+            recentHistoryControls(setDraftAction, "Recent Commands")
           )}
 
           <button
@@ -1172,11 +1362,11 @@ export function App() {
             </button>
           )}
 
-          {target && declarations[target.tokenId]?.queue && declarations[target.tokenId].queue!.length > 0 && (
+          {targetQueue.length > 0 && (
             <div className="queue-display">
-              <h3>Queued Actions ({declarations[target.tokenId].queue!.length}/3)</h3>
+              <h3>Queued Actions ({targetQueue.length}/3)</h3>
               <ul className="queue-list">
-                {declarations[target.tokenId].queue!.map((qAction, idx, arr) => {
+                {targetQueue.map((qAction, idx, arr) => {
                   const isEditing = editingQueueIdx === idx;
                   const commitEdit = async () => {
                     await updateQueueEntry(target.tokenId, idx, editingQueueValue);
@@ -1362,20 +1552,7 @@ export function App() {
           </label>
 
           {history.length > 0 && (
-            <div className="history-list">
-              <span className="history-label">Recent:</span>
-              {history.slice(0, 10).map((entry, idx) => (
-                <button
-                  key={`${entry.text}::${idx}`}
-                  type="button"
-                  className="history-chip"
-                  title={`Fill "${entry.text}" — does not select tokens`}
-                  onClick={() => setBulkActionText(entry.text)}
-                >
-                  <span className="history-text">{entry.text}</span>
-                </button>
-              ))}
-            </div>
+            recentHistoryControls(setBulkActionText, "Recent Commands")
           )}
 
           <button

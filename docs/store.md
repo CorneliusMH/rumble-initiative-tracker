@@ -60,7 +60,11 @@ A **Declare Actions (GM)** panel below the initiative list lets the GM declare f
 
 ## Storage
 
-All shared state is scoped to the current scene under the namespace `com.rumble.initiative`. Switching scenes shows a fresh order; returning to a scene restores its round, rumble, phase, declarations, and per-player initiatives. History chips are stored in local storage (per-browser, not synced).
+Shared state is scoped to the current scene under the namespace `com.rumble.initiative`. Switching scenes shows a fresh order; returning to a scene restores its round, rumble, phase, current declarations, the next queued action, and per-player initiatives.
+
+To reduce scene metadata, each player stores their second and third queued actions in browser local storage, scoped to the current room and participant. The first queued action remains in scene metadata so the GM can advance it for everyone. Players using another browser or device will not have access to their locally stored later queue entries.
+
+The combat log is stored in the GM's browser local storage, scoped to the current room, rather than in scene metadata. Existing scene logs are migrated to the GM's local log when the scene is opened. The log is therefore not shared between multiple GMs or devices; export it when a portable copy is needed. Recent command history remains per-browser local storage as well.
 
 ## Support
 
