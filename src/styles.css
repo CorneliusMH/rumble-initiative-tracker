@@ -204,6 +204,7 @@ button:disabled {
 .name {
   font-weight: 500;
   grid-column: 2;
+  grid-row: 1;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -214,6 +215,7 @@ button:disabled {
   min-width: 30px;
   text-align: right;
   grid-column: 1;
+  grid-row: 1;
 }
 
 .action {
@@ -224,6 +226,7 @@ button:disabled {
   max-width: 40vw;
   overflow-wrap: anywhere;
   grid-column: 3;
+  grid-row: 1;
 }
 
 .remove-token {
@@ -238,6 +241,7 @@ button:disabled {
   cursor: pointer;
   transition: all 0.2s;
   grid-column: 4;
+  grid-row: 1;
 }
 
 .remove-token:hover {
@@ -774,6 +778,8 @@ button:disabled {
   font-weight: 600;
   text-align: right;
   border-color: var(--color-action) !important;
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .init {
